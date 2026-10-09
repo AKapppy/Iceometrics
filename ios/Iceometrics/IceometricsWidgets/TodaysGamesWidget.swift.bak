@@ -1,0 +1,213 @@
+import SwiftUI
+import WidgetKit
+
+struct TodaysGamesEntry: TimelineEntry {
+    let date: Date
+    let games: [WidgetGame]
+}
+
+struct TodaysGamesProvider: TimelineProvider {
+    func placeholder(in context: Context) -> TodaysGamesEntry {
+        TodaysGamesEntry(
+            date: Date(),
+            games: WidgetSampleData.games
+        )
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (TodaysGamesEntry) -> Void
+    ) {
+        completion(
+            TodaysGamesEntry(
+                date: Date(),
+                games: WidgetSampleData.games
+            )
+        )
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<TodaysGamesEntry>) -> Void
+    ) {
+        let entry = TodaysGamesEntry(
+            date: Date(),
+            games: WidgetSampleData.games
+        )
+
+        completion(
+            Timeline(
+                entries: [entry],
+                policy: .after(
+                    Date().addingTimeInterval(900)
+                )
+            )
+        )
+    }
+}
+
+struct TodaysGameTile: View {
+    let game: WidgetGame
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(game.awayTeam.abbreviation)
+                Spacer()
+                Text(game.homeTeam.abbreviation)
+            }
+            .font(.caption.weight(.heavy))
+
+            if game.phase == .live
+                || game.phase == .final
+                || game.phase == .intermission {
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(game.awayScore)")
+                    Text("–")
+                        .opacity(0.5)
+                    Text("\(game.homeScore)")
+                }
+                .font(
+                    .system(
+                        size: 19,
+                        weight: .black,
+                        design: .rounded
+                    )
+                )
+
+            } else {
+                Text(
+                    "\(Int((game.awayProbability * 100).rounded()))  ·  \(Int((game.homeProbability * 100).rounded()))"
+                )
+                .font(
+                    .system(
+                        size: 15,
+                        weight: .bold,
+                        design: .rounded
+                    )
+                )
+            }
+
+            Text(game.detail)
+                .font(.caption2.weight(.semibold))
+                .opacity(0.72)
+        }
+        .foregroundStyle(.white)
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(tileBackground)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 13,
+                style: .continuous
+            )
+        )
+    }
+
+    private var tileBackground: some View {
+        let color = stateColor
+
+        return ZStack {
+            color.opacity(0.20)
+
+            LinearGradient(
+                colors: [
+                    color.opacity(0.22),
+                    Color.black.opacity(0.10)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    private var stateColor: Color {
+        switch game.phase {
+        case .scheduled, .final:
+            return Color(white: 0.28)
+
+        case .starting, .intermission:
+            return Color(white: 0.52)
+
+        case .live:
+            if game.awayScore == game.homeScore {
+                return .white
+            }
+
+            if game.awayScore > game.homeScore {
+                return Color(
+                    widgetHex: game.awayTeam.accentHex
+                )
+            }
+
+            return Color(
+                widgetHex: game.homeTeam.accentHex
+            )
+        }
+    }
+}
+
+struct TodaysGamesWidgetView: View {
+    let entry: TodaysGamesEntry
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 7),
+        GridItem(.flexible(), spacing: 7)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("TODAY'S GAMES")
+                    .font(.caption.weight(.heavy))
+
+                Spacer()
+
+                Text("ICEOMETRICS")
+                    .font(.caption2.weight(.bold))
+                    .opacity(0.55)
+            }
+
+            LazyVGrid(
+                columns: columns,
+                spacing: 7
+            ) {
+                ForEach(entry.games.prefix(4)) { game in
+                    TodaysGameTile(game: game)
+                        .frame(minHeight: 105)
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .containerBackground(
+            Color(
+                red: 0.055,
+                green: 0.060,
+                blue: 0.070
+            ),
+            for: .widget
+        )
+    }
+}
+
+struct TodaysGamesWidget: Widget {
+    let kind = "TodaysGamesWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: TodaysGamesProvider()
+        ) { entry in
+            TodaysGamesWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Today's Games")
+        .description(
+            "See today's games, scores, predictions, and game states."
+        )
+        .supportedFamilies([
+            .systemLarge
+        ])
+    }
+}

@@ -1,0 +1,153 @@
+import SwiftUI
+import WidgetKit
+
+struct TeamGameEntry: TimelineEntry {
+    let date: Date
+    let game: WidgetGame?
+    let hasSnapshot: Bool
+}
+
+struct TeamGameProvider: TimelineProvider {
+    func placeholder(
+        in context: Context
+    ) -> TeamGameEntry {
+        TeamGameEntry(
+            date: Date(),
+            game: nil,
+            hasSnapshot: false
+        )
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (TeamGameEntry) -> Void
+    ) {
+        completion(makeEntry())
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<TeamGameEntry>) -> Void
+    ) {
+        let entry = makeEntry()
+
+        completion(
+            Timeline(
+                entries: [entry],
+                policy: .after(
+                    Date().addingTimeInterval(15 * 60)
+                )
+            )
+        )
+    }
+
+    private func makeEntry() -> TeamGameEntry {
+        guard let snapshot = WidgetSnapshotStore.load() else {
+            return TeamGameEntry(
+                date: Date(),
+                game: nil,
+                hasSnapshot: false
+            )
+        }
+
+        let game = snapshot.games.first {
+            $0.isToday
+                && $0.containsTeam("NYR")
+        }
+
+        return TeamGameEntry(
+            date: Date(),
+            game: game,
+            hasSnapshot: true
+        )
+    }
+}
+
+struct TeamGameWidgetView: View {
+    let entry: TeamGameEntry
+
+    var body: some View {
+        Group {
+            if let game = entry.game {
+                VStack(spacing: 8) {
+                    HStack {
+                        Text(game.awayTeam.abbreviation)
+                        Spacer()
+                        Text(game.homeTeam.abbreviation)
+                    }
+                    .font(.headline.bold())
+
+                    Spacer()
+
+                    Text("VS")
+                        .font(
+                            .system(
+                                size: 30,
+                                weight: .black,
+                                design: .rounded
+                            )
+                        )
+
+                    Text(game.detail)
+                        .font(.caption)
+
+                    Spacer()
+
+                    HStack {
+                        Text(percent(game.awayProbability))
+                        Spacer()
+                        Text(percent(game.homeProbability))
+                    }
+                    .font(.headline.bold())
+                }
+                .padding(14)
+                .foregroundStyle(.white)
+            } else {
+                VStack(spacing: 6) {
+                    Text("TEAM GAME")
+                        .font(.caption.bold())
+
+                    Text(
+                        entry.hasSnapshot
+                        ? "NO NYR GAME"
+                        : "NO SNAPSHOT"
+                    )
+                    .font(.headline.bold())
+                }
+                .foregroundStyle(.white)
+            }
+        }
+        .containerBackground(
+            Color.blue,
+            for: .widget
+        )
+    }
+
+    private func percent(
+        _ value: Double?
+    ) -> String {
+        guard let value else {
+            return "—"
+        }
+
+        return "\(Int((value * 100).rounded()))%"
+    }
+}
+
+struct TeamGameWidget: Widget {
+    let kind = "IceometricsTeamGameDataTest"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: TeamGameProvider()
+        ) { entry in
+            TeamGameWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Team Game")
+        .description("Team Game data diagnostic.")
+        .supportedFamilies([
+            .systemSmall
+        ])
+    }
+}

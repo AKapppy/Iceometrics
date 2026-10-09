@@ -1,0 +1,107 @@
+import Foundation
+
+enum WidgetSampleData {
+    static let rangers = WidgetTeam(
+        abbreviation: "NYR",
+        name: "Rangers",
+        accentHex: "#1560BD"
+    )
+
+    static let devils = WidgetTeam(
+        abbreviation: "NJD",
+        name: "Devils",
+        accentHex: "#CE1126"
+    )
+
+    static let islanders = WidgetTeam(
+        abbreviation: "NYI",
+        name: "Islanders",
+        accentHex: "#F47D30"
+    )
+
+    static let bruins = WidgetTeam(
+        abbreviation: "BOS",
+        name: "Bruins",
+        accentHex: "#FFB81C"
+    )
+
+    static let mapleLeafs = WidgetTeam(
+        abbreviation: "TOR",
+        name: "Maple Leafs",
+        accentHex: "#2F6DB2"
+    )
+
+    static let flyers = WidgetTeam(
+        abbreviation: "PHI",
+        name: "Flyers",
+        accentHex: "#F74902"
+    )
+
+    static let capitals = WidgetTeam(
+        abbreviation: "WSH",
+        name: "Capitals",
+        accentHex: "#4B75A8"
+    )
+
+    static let hurricanes = WidgetTeam(
+        abbreviation: "CAR",
+        name: "Hurricanes",
+        accentHex: "#8B1A2B"
+    )
+
+    static let teamGame = WidgetGame(
+        id: "NYR-NJD",
+        awayTeam: rangers,
+        homeTeam: devils,
+        awayScore: 3,
+        homeScore: 2,
+        awayProbability: 0.68,
+        homeProbability: 0.32,
+        phase: .live,
+        detail: "2nd · 8:14",
+        isFavoriteTeamGame: true
+    )
+
+    static let games: [WidgetGame] = [
+        teamGame,
+
+        WidgetGame(
+            id: "NYI-PHI",
+            awayTeam: islanders,
+            homeTeam: flyers,
+            awayScore: 2,
+            homeScore: 2,
+            awayProbability: 0.51,
+            homeProbability: 0.49,
+            phase: .live,
+            detail: "3rd · 12:07",
+            isFavoriteTeamGame: false
+        ),
+
+        WidgetGame(
+            id: "TOR-BOS",
+            awayTeam: mapleLeafs,
+            homeTeam: bruins,
+            awayScore: 0,
+            homeScore: 0,
+            awayProbability: 0.44,
+            homeProbability: 0.56,
+            phase: .scheduled,
+            detail: "7:30 PM",
+            isFavoriteTeamGame: false
+        ),
+
+        WidgetGame(
+            id: "WSH-CAR",
+            awayTeam: capitals,
+            homeTeam: hurricanes,
+            awayScore: 2,
+            homeScore: 4,
+            awayProbability: 0,
+            homeProbability: 1,
+            phase: .final,
+            detail: "FINAL",
+            isFavoriteTeamGame: false
+        )
+    ]
+}

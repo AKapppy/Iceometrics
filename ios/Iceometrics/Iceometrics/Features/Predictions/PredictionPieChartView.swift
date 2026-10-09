@@ -1,0 +1,540 @@
+import SwiftUI
+
+struct PredictionPieChartView: View {
+    let snapshot: PredictionSnapshot
+
+    @State private var selectedColumnIndex: Int
+    @State private var showingCalendar = false
+    @State private var hoveredSlice: PredictionPieHover?
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private let metricOrder = [
+        "madeplayoffs",
+        "round2",
+        "round3",
+        "round4",
+        "woncup",
+    ]
+
+    init(snapshot: PredictionSnapshot) {
+        self.snapshot = snapshot
+
+        let count = snapshot.tables["madeplayoffs"]?.columns.count
+            ?? snapshot.tables.values.first?.columns.count
+            ?? 0
+
+        _selectedColumnIndex = State(initialValue: max(0, count - 1))
+    }
+
+    private var columns: [String] {
+        snapshot.tables["madeplayoffs"]?.columns
+            ?? snapshot.tables.values.first?.columns
+            ?? []
+    }
+
+    private var activeMetrics: [PredictionMetric] {
+        metricOrder.compactMap { key in
+            guard snapshot.tables[key] != nil else { return nil }
+            return snapshot.metrics.first { $0.key == key }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            dateStepper
+
+            GeometryReader { proxy in
+                let side = min(proxy.size.width, proxy.size.height)
+                let center = CGPoint(
+                    x: proxy.size.width / 2,
+                    y: proxy.size.height / 2
+                )
+                let outerRadius = max(40, side * 0.49)
+                let innerRadius = outerRadius * 0.23
+
+                ZStack {
+                    Canvas { context, _ in
+                        drawRings(
+                            context: &context,
+                            center: center,
+                            outerRadius: outerRadius,
+                            innerRadius: innerRadius
+                        )
+                    }
+
+                    ForEach(outerRingSlices) { slice in
+                        let ringWidth = activeMetrics.isEmpty
+                            ? (outerRadius - innerRadius)
+                            : (outerRadius - innerRadius) / CGFloat(activeMetrics.count)
+
+                        let outerRingInner = max(
+                            innerRadius,
+                            outerRadius - ringWidth + 2
+                        )
+
+                        let radius = outerRingInner
+                            + 0.62 * (outerRadius - outerRingInner)
+
+                        let radians = slice.midAngle * .pi / 180
+                        let x = center.x + radius * cos(radians)
+                        let y = center.y + radius * sin(radians)
+                        let arcLength = CGFloat(slice.extent * .pi / 180) * radius
+                        let logoSize: CGFloat =
+                            horizontalSizeClass == .compact ? 22 : 28
+
+                        if arcLength >= 18 {
+                            PredictionPieLogo(team: slice.team)
+                                .frame(width: logoSize, height: logoSize)
+                                .position(x: x, y: y)
+                        }
+                    }
+
+                    AsyncImage(url: snapshot.cupURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFit()
+                        default:
+                            Image(systemName: "trophy.fill")
+                                .resizable()
+                                .scaledToFit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(
+                        width: innerRadius * 0.9,
+                        height: innerRadius * 1.45
+                    )
+                    .position(x: center.x, y: center.y)
+
+                    if let hoveredSlice {
+                        hoverCard(hoveredSlice)
+                            .position(
+                                x: min(
+                                    proxy.size.width - 105,
+                                    max(105, hoveredSlice.location.x + 105)
+                                ),
+                                y: min(
+                                    proxy.size.height - 34,
+                                    max(34, hoveredSlice.location.y - 42)
+                                )
+                            )
+                            .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        hoveredSlice = hoverValue(
+                            at: location,
+                            center: center,
+                            outerRadius: outerRadius,
+                            innerRadius: innerRadius
+                        )
+                    case .ended:
+                        hoveredSlice = nil
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
+        .background(
+            .thinMaterial,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .onChange(of: snapshot.generatedAt) { _, _ in
+            selectedColumnIndex = max(0, columns.count - 1)
+        }
+    }
+
+    private func hoverCard(_ hover: PredictionPieHover) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(hover.team.name)
+                .font(.caption.weight(.bold))
+
+            Text(
+                "\(hover.metricLabel): "
+                + hover.value.formatted(
+                    .percent.precision(.fractionLength(1))
+                )
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            .regularMaterial,
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .shadow(radius: 4)
+    }
+
+    private func hoverValue(
+        at location: CGPoint,
+        center: CGPoint,
+        outerRadius: CGFloat,
+        innerRadius: CGFloat
+    ) -> PredictionPieHover? {
+        guard !activeMetrics.isEmpty else { return nil }
+
+        let dx = location.x - center.x
+        let dy = location.y - center.y
+        let radius = sqrt(dx * dx + dy * dy)
+
+        guard radius >= innerRadius, radius <= outerRadius else {
+            return nil
+        }
+
+        let ringWidth = (outerRadius - innerRadius)
+            / CGFloat(activeMetrics.count)
+
+        let metricIndex = min(
+            activeMetrics.count - 1,
+            max(0, Int((outerRadius - radius) / ringWidth))
+        )
+
+        let metric = activeMetrics[metricIndex]
+
+        var angle = atan2(dy, dx) * 180 / .pi
+        if angle < 0 { angle += 360 }
+
+        for slice in slices(for: metric.key) {
+            let start = normalizedAngle(slice.startAngle)
+            let delta = normalizedAngle(angle - start)
+
+            if delta <= slice.extent {
+                return PredictionPieHover(
+                    team: slice.team,
+                    metricLabel: metric.label,
+                    value: slice.value,
+                    location: location
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func normalizedAngle(_ value: Double) -> Double {
+        let result = value.truncatingRemainder(dividingBy: 360)
+        return result < 0 ? result + 360 : result
+    }
+
+    private var dateStepper: some View {
+        HStack(spacing: 16) {
+            Button {
+                selectedColumnIndex = max(0, selectedColumnIndex - 1)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.headline)
+                    .frame(width: 34, height: 30)
+            }
+            .buttonStyle(.borderless)
+            .disabled(selectedColumnIndex <= 0)
+
+            Button {
+                showingCalendar = true
+            } label: {
+                Text(displayDate(selectedColumn))
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minWidth: 150)
+            .popover(isPresented: $showingCalendar) {
+                predictionCalendar
+            }
+
+            Button {
+                selectedColumnIndex = min(
+                    max(0, columns.count - 1),
+                    selectedColumnIndex + 1
+                )
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.headline)
+                    .frame(width: 34, height: 30)
+            }
+            .buttonStyle(.borderless)
+            .disabled(
+                columns.isEmpty
+                    || selectedColumnIndex >= columns.count - 1
+            )
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var predictionCalendar: some View {
+        DatePicker(
+            "Prediction date",
+            selection: Binding(
+                get: {
+                    selectedColumnDate
+                        ?? availableColumnDates.last
+                        ?? Date()
+                },
+                set: { newDate in
+                    if let index = nearestColumnIndex(to: newDate) {
+                        selectedColumnIndex = index
+                    }
+                }
+            ),
+            in: predictionDateRange,
+            displayedComponents: .date
+        )
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .padding()
+    }
+
+    private var availableColumnDates: [Date] {
+        columns.compactMap(dateForColumn)
+    }
+
+    private var selectedColumnDate: Date? {
+        dateForColumn(selectedColumn)
+    }
+
+    private var predictionDateRange: ClosedRange<Date> {
+        guard let first = availableColumnDates.first,
+              let last = availableColumnDates.last else {
+            let today = Calendar.current.startOfDay(for: Date())
+            return today...today
+        }
+
+        return first...last
+    }
+
+    private func nearestColumnIndex(to date: Date) -> Int? {
+        let calendar = Calendar(identifier: .gregorian)
+
+        return columns.indices.min { lhs, rhs in
+            guard let left = dateForColumn(columns[lhs]),
+                  let right = dateForColumn(columns[rhs]) else {
+                return false
+            }
+
+            let target = calendar.startOfDay(for: date)
+            let leftDistance = abs(
+                calendar.startOfDay(for: left).timeIntervalSince(target)
+            )
+            let rightDistance = abs(
+                calendar.startOfDay(for: right).timeIntervalSince(target)
+            )
+
+            return leftDistance < rightDistance
+        }
+    }
+
+    private var selectedColumn: String {
+        guard columns.indices.contains(selectedColumnIndex) else { return "" }
+        return columns[selectedColumnIndex]
+    }
+
+    private var orderedTeams: [PredictionTeam] {
+        let lookup = Dictionary(
+            uniqueKeysWithValues: snapshot.teams.map { ($0.code, $0) }
+        )
+
+        let order = [
+            "NYR", "CAR", "CBJ", "NJD", "NYI", "PHI", "PIT", "WSH",
+            "BOS", "BUF", "DET", "FLA", "MTL", "OTT", "TBL", "TOR",
+            "ANA", "CGY", "EDM", "LAK", "SEA", "SJS", "VAN", "VGK",
+            "CHI", "COL", "DAL", "MIN", "NSH", "STL", "WPG", "UTA",
+        ]
+
+        let ordered = order.compactMap { lookup[$0] }
+        let used = Set(ordered.map(\.code))
+
+        return ordered
+            + snapshot.teams
+                .filter { !used.contains($0.code) }
+                .sorted { $0.name < $1.name }
+    }
+
+    private var outerRingSlices: [PredictionRingSlice] {
+        slices(for: "madeplayoffs")
+    }
+
+    private func slices(for metricKey: String) -> [PredictionRingSlice] {
+        guard let table = snapshot.tables[metricKey],
+              table.columns.indices.contains(selectedColumnIndex) else {
+            return []
+        }
+
+        let values: [(PredictionTeam, Double)] =
+            orderedTeams.compactMap { team in
+                guard let value = table.value(
+                    teamCode: team.code,
+                    columnIndex: selectedColumnIndex
+                ), value > 0 else {
+                    return nil
+                }
+
+                return (team, value)
+            }
+
+        let total = values.reduce(0) { $0 + $1.1 }
+        guard total > 0 else { return [] }
+
+        var start = -90.0
+
+        return values.map { team, value in
+            let extent = 360.0 * value / total
+            let slice = PredictionRingSlice(
+                team: team,
+                value: value,
+                startAngle: start,
+                extent: extent
+            )
+            start += extent
+            return slice
+        }
+    }
+
+    private func drawRings(
+        context: inout GraphicsContext,
+        center: CGPoint,
+        outerRadius: CGFloat,
+        innerRadius: CGFloat
+    ) {
+        guard !activeMetrics.isEmpty else { return }
+
+        let ringWidth = (outerRadius - innerRadius)
+            / CGFloat(activeMetrics.count)
+
+        let gap: CGFloat = 2
+
+        for (metricIndex, metric) in activeMetrics.enumerated() {
+            let ringOuter = outerRadius - CGFloat(metricIndex) * ringWidth
+            let ringInner = max(
+                innerRadius,
+                ringOuter - ringWidth + gap
+            )
+
+            for slice in slices(for: metric.key) {
+                let path = annularSector(
+                    center: center,
+                    innerRadius: ringInner,
+                    outerRadius: ringOuter,
+                    startDegrees: slice.startAngle,
+                    endDegrees: slice.startAngle + slice.extent
+                )
+
+                let base = Color(hex: slice.team.colorHex)
+                let tint = 0.92 - Double(metricIndex) * 0.08
+
+                context.fill(
+                    path,
+                    with: .color(base.opacity(max(0.56, tint)))
+                )
+            }
+        }
+    }
+
+    private func annularSector(
+        center: CGPoint,
+        innerRadius: CGFloat,
+        outerRadius: CGFloat,
+        startDegrees: Double,
+        endDegrees: Double
+    ) -> Path {
+        var path = Path()
+
+        path.addArc(
+            center: center,
+            radius: outerRadius,
+            startAngle: .degrees(startDegrees),
+            endAngle: .degrees(endDegrees),
+            clockwise: false
+        )
+
+        path.addArc(
+            center: center,
+            radius: innerRadius,
+            startAngle: .degrees(endDegrees),
+            endAngle: .degrees(startDegrees),
+            clockwise: true
+        )
+
+        path.closeSubpath()
+        return path
+    }
+
+    private func dateForColumn(_ raw: String) -> Date? {
+        let parts = raw.split(separator: "/")
+
+        guard parts.count == 2,
+              let month = Int(parts[0]),
+              let day = Int(parts[1]),
+              let startYear = Int(snapshot.season.prefix(4)) else {
+            return nil
+        }
+
+        let year = month >= 7 ? startYear : startYear + 1
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+
+        return calendar.date(
+            from: DateComponents(
+                year: year,
+                month: month,
+                day: day
+            )
+        )
+    }
+
+    private func displayDate(_ raw: String) -> String {
+        guard let date = dateForColumn(raw) else { return raw }
+
+        return date.formatted(
+            .dateTime
+                .day()
+                .month(.abbreviated)
+                .year()
+                .locale(Locale(identifier: "en_GB"))
+        )
+    }
+}
+
+private struct PredictionRingSlice: Identifiable {
+    let team: PredictionTeam
+    let value: Double
+    let startAngle: Double
+    let extent: Double
+
+    var id: String { team.code }
+    var midAngle: Double { startAngle + extent / 2 }
+}
+
+private struct PredictionPieHover {
+    let team: PredictionTeam
+    let metricLabel: String
+    let value: Double
+    let location: CGPoint
+}
+
+private struct PredictionPieLogo: View {
+    let team: PredictionTeam
+
+    var body: some View {
+        AsyncImage(url: team.logoURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFit()
+            default:
+                Image(systemName: "hockey.puck.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(3)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}

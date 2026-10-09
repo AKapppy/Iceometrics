@@ -1,0 +1,183 @@
+import SwiftUI
+import WidgetKit
+
+struct DailyPieEntry: TimelineEntry {
+    let date: Date
+    let homeShare: Double
+    let label: String
+}
+
+struct DailyPieProvider: TimelineProvider {
+    func placeholder(in context: Context) -> DailyPieEntry {
+        DailyPieEntry(
+            date: Date(),
+            homeShare: 0.58,
+            label: "TODAY"
+        )
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (DailyPieEntry) -> Void
+    ) {
+        completion(
+            DailyPieEntry(
+                date: Date(),
+                homeShare: 0.58,
+                label: "TODAY"
+            )
+        )
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<DailyPieEntry>) -> Void
+    ) {
+        let entry = DailyPieEntry(
+            date: Date(),
+            homeShare: 0.58,
+            label: "TODAY"
+        )
+
+        completion(
+            Timeline(
+                entries: [entry],
+                policy: .after(
+                    Date().addingTimeInterval(1800)
+                )
+            )
+        )
+    }
+}
+
+struct DailyPieShape: Shape {
+    let progress: Double
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        let center = CGPoint(
+            x: rect.midX,
+            y: rect.midY
+        )
+
+        let radius = min(
+            rect.width,
+            rect.height
+        ) / 2
+
+        let start = Angle.degrees(-90)
+        let end = Angle.degrees(
+            -90 + 360 * progress
+        )
+
+        path.move(to: center)
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: start,
+            endAngle: end,
+            clockwise: false
+        )
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+struct DailyPieWidgetView: View {
+    let entry: DailyPieEntry
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = min(
+                geometry.size.width,
+                geometry.size.height
+            )
+
+            VStack(spacing: 3) {
+                Spacer(minLength: 0)
+
+                ZStack {
+                    Circle()
+                        .fill(
+                            Color(
+                                red: 0.12,
+                                green: 0.24,
+                                blue: 0.50
+                            )
+                        )
+
+                    DailyPieShape(
+                        progress: entry.homeShare
+                    )
+                    .fill(
+                        Color(
+                            red: 0.82,
+                            green: 0.12,
+                            blue: 0.18
+                        )
+                    )
+
+                    Circle()
+                        .stroke(
+                            .white.opacity(0.18),
+                            lineWidth: 1
+                        )
+                }
+                .frame(
+                    width: size * 0.72,
+                    height: size * 0.72
+                )
+
+                Text(entry.label)
+                    .font(
+                        .system(
+                            size: 8,
+                            weight: .bold,
+                            design: .rounded
+                        )
+                    )
+                    .tracking(1.1)
+                    .foregroundStyle(
+                        .white.opacity(0.66)
+                    )
+
+                Spacer(minLength: 0)
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity
+            )
+        }
+        .containerBackground(
+            Color(
+                red: 0.035,
+                green: 0.040,
+                blue: 0.050
+            ),
+            for: .widget
+        )
+    }
+}
+
+struct DailyPieWidget: Widget {
+    let kind = "DailyPieWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: DailyPieProvider()
+        ) { entry in
+            DailyPieWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Daily Pie")
+        .description(
+            "Today's Iceometrics prediction pie."
+        )
+        .supportedFamilies([
+            .systemSmall,
+            .systemLarge
+        ])
+    }
+}

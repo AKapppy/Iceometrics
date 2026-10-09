@@ -1,0 +1,286 @@
+import SwiftUI
+import WidgetKit
+
+struct TeamGameEntry: TimelineEntry {
+    let date: Date
+    let game: WidgetGame
+}
+
+struct TeamGameProvider: TimelineProvider {
+    func placeholder(in context: Context) -> TeamGameEntry {
+        TeamGameEntry(
+            date: Date(),
+            game: WidgetSampleData.teamGame
+        )
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (TeamGameEntry) -> Void
+    ) {
+        completion(
+            TeamGameEntry(
+                date: Date(),
+                game: WidgetSampleData.teamGame
+            )
+        )
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<TeamGameEntry>) -> Void
+    ) {
+        let entry = TeamGameEntry(
+            date: Date(),
+            game: WidgetSampleData.teamGame
+        )
+
+        let next = Calendar.current.date(
+            byAdding: .minute,
+            value: 15,
+            to: Date()
+        ) ?? Date().addingTimeInterval(900)
+
+        completion(
+            Timeline(
+                entries: [entry],
+                policy: .after(next)
+            )
+        )
+    }
+}
+
+struct ProbabilitySplitBackground: View {
+    let game: WidgetGame
+
+    var body: some View {
+        GeometryReader { geometry in
+            let away = max(0, min(1, game.awayProbability))
+            let split = geometry.size.width * away
+
+            ZStack {
+                Color.black
+
+                HStack(spacing: 0) {
+                    Color(widgetHex: game.awayTeam.accentHex)
+                        .frame(width: split)
+
+                    Color(widgetHex: game.homeTeam.accentHex)
+                }
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.32),
+                        .clear,
+                        .black.opacity(0.22)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                .black.opacity(0.22),
+                                .clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: 28)
+                    .offset(
+                        x: split
+                        - geometry.size.width / 2
+                    )
+            }
+        }
+    }
+}
+
+struct TeamGameWidgetView: View {
+    @Environment(\.widgetFamily) private var family
+
+    let entry: TeamGameEntry
+
+    var body: some View {
+        ZStack {
+            ProbabilitySplitBackground(game: entry.game)
+
+            switch family {
+            case .systemSmall:
+                smallView
+
+            default:
+                mediumView
+            }
+        }
+        .containerBackground(.clear, for: .widget)
+    }
+
+    private var smallView: some View {
+        VStack(spacing: 8) {
+            HStack {
+                teamLabel(entry.game.awayTeam)
+
+                Spacer()
+
+                teamLabel(entry.game.homeTeam)
+            }
+
+            Spacer(minLength: 0)
+
+            if entry.game.phase == .live
+                || entry.game.phase == .final {
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(entry.game.awayScore)")
+
+                    Text("–")
+                        .opacity(0.65)
+
+                    Text("\(entry.game.homeScore)")
+                }
+                .font(
+                    .system(
+                        size: 31,
+                        weight: .heavy,
+                        design: .rounded
+                    )
+                )
+
+            } else {
+                Text(entry.game.detail)
+                    .font(
+                        .system(
+                            size: 18,
+                            weight: .bold,
+                            design: .rounded
+                        )
+                    )
+            }
+
+            Text(entry.game.detail)
+                .font(.caption2.weight(.semibold))
+                .opacity(0.82)
+
+            Spacer(minLength: 0)
+
+            HStack {
+                Text(percent(entry.game.awayProbability))
+
+                Spacer()
+
+                Text(percent(entry.game.homeProbability))
+            }
+            .font(.caption.weight(.bold))
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+    }
+
+    private var mediumView: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                teamLabel(entry.game.awayTeam)
+
+                Text(percent(entry.game.awayProbability))
+                    .font(
+                        .system(
+                            size: 22,
+                            weight: .heavy,
+                            design: .rounded
+                        )
+                    )
+            }
+
+            Spacer()
+
+            VStack(spacing: 5) {
+                if entry.game.phase == .live
+                    || entry.game.phase == .final {
+
+                    Text(
+                        "\(entry.game.awayScore) – \(entry.game.homeScore)"
+                    )
+                    .font(
+                        .system(
+                            size: 34,
+                            weight: .heavy,
+                            design: .rounded
+                        )
+                    )
+
+                } else {
+                    Text("VS")
+                        .font(
+                            .system(
+                                size: 20,
+                                weight: .bold,
+                                design: .rounded
+                            )
+                        )
+                }
+
+                Text(entry.game.detail)
+                    .font(.caption.weight(.semibold))
+                    .opacity(0.82)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 5) {
+                teamLabel(entry.game.homeTeam)
+
+                Text(percent(entry.game.homeProbability))
+                    .font(
+                        .system(
+                            size: 22,
+                            weight: .heavy,
+                            design: .rounded
+                        )
+                    )
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(16)
+    }
+
+    private func teamLabel(_ team: WidgetTeam) -> some View {
+        Text(team.abbreviation)
+            .font(
+                .system(
+                    size: 15,
+                    weight: .black,
+                    design: .rounded
+                )
+            )
+    }
+
+    private func percent(_ probability: Double) -> String {
+        "\(Int((probability * 100).rounded()))%"
+    }
+}
+
+struct TeamGameWidget: Widget {
+    let kind = "TeamGameWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: TeamGameProvider()
+        ) { entry in
+            TeamGameWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Team Game")
+        .description(
+            "Track one team's current or upcoming game."
+        )
+        .supportedFamilies([
+            .systemSmall,
+            .systemMedium
+        ])
+    }
+}

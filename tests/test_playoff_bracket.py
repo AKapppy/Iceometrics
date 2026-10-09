@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import datetime as dt
+import unittest
+from unittest.mock import patch
+import xml.etree.ElementTree as ET
+
+from hockey_app.ui.tabs.models_playoff_math import series_probability_table
+from hockey_app.ui.renderers.pie_chart import _playoff_matchup_ring_order
+from hockey_app.ui.tabs.models_playoff_picture import (
+    _bracket_snapshot,
+    _pick_bracket_winner,
+    _playoff_rounds_started_from_xml_root,
+    playoff_status_map,
+)
+from hockey_app.ui.tabs.points import _is_nhl_regular_season_game
+from hockey_app.ui.tabs.models_playoff_win_probabilities import _best_of_7_lengths_from_score
+
+
+class PlayoffBracketSnapshotTests(unittest.TestCase):
+    def test_regular_season_filter_excludes_playoff_games(self) -> None:
+        self.assertTrue(_is_nhl_regular_season_game({"gameType": 2, "id": 2025020001}))
+        self.assertFalse(_is_nhl_regular_season_game({"gameType": 3, "id": 2025030111}))
+        self.assertFalse(_is_nhl_regular_season_game({"id": 2025030111}))
+
+    def test_stronger_division_winner_gets_lower_wildcard(self) -> None:
+        pts = {
+            "BUF": 108.0,
+            "TBL": 100.0,
+            "MTL": 96.0,
+            "BOS": 97.0,
+            "CAR": 112.0,
+            "PIT": 101.0,
+            "PHI": 99.0,
+            "OTT": 95.0,
+            "VGK": 105.0,
+            "EDM": 101.0,
+            "ANA": 98.0,
+            "UTA": 99.0,
+            "COL": 118.0,
+            "DAL": 104.0,
+            "MIN": 97.0,
+            "LAK": 96.0,
+        }
+        standings = {
+            "BUF": {"divisionSequence": 1, "conferenceSequence": 2},
+            "TBL": {"divisionSequence": 2, "conferenceSequence": 4},
+            "MTL": {"divisionSequence": 3, "conferenceSequence": 6},
+            "BOS": {"conferenceSequence": 5},
+            "CAR": {"divisionSequence": 1, "conferenceSequence": 1},
+            "PIT": {"divisionSequence": 2, "conferenceSequence": 3},
+            "PHI": {"divisionSequence": 3, "conferenceSequence": 4},
+            "OTT": {"conferenceSequence": 8},
+            "VGK": {"divisionSequence": 1, "conferenceSequence": 2},
+            "EDM": {"divisionSequence": 2, "conferenceSequence": 4},
+            "ANA": {"divisionSequence": 3, "conferenceSequence": 6},
+            "UTA": {"conferenceSequence": 5},
+            "COL": {"divisionSequence": 1, "conferenceSequence": 1},
+            "DAL": {"divisionSequence": 2, "conferenceSequence": 3},
+            "MIN": {"divisionSequence": 3, "conferenceSequence": 7},
+            "LAK": {"conferenceSequence": 8},
+        }
+
+        bracket = _bracket_snapshot(pts, standings)
+
+        self.assertEqual(bracket["East_R1"], ["BUF", "BOS", "TBL", "MTL", "CAR", "OTT", "PIT", "PHI"])
+        self.assertEqual(bracket["West_R1"], ["COL", "LAK", "DAL", "MIN", "VGK", "UTA", "EDM", "ANA"])
+
+    def test_points_fallback_still_assigns_lower_wildcard_to_better_winner(self) -> None:
+        pts = {
+            "VGK": 105.0,
+            "EDM": 101.0,
+            "ANA": 98.0,
+            "UTA": 99.0,
+            "COL": 118.0,
+            "DAL": 104.0,
+            "MIN": 97.0,
+            "LAK": 96.0,
+        }
+
+        bracket = _bracket_snapshot(pts, standings=None)
+
+        self.assertEqual(bracket["West_R1"], ["COL", "LAK", "DAL", "UTA", "VGK", "MIN", "EDM", "ANA"])
+
+    def test_playoff_matchup_ring_order_keeps_series_neighbors_together(self) -> None:
+        field = [
+            "COL",
+            "LAK",
+            "DAL",
+            "MIN",
+            "VGK",
+            "UTA",
+            "EDM",
+            "ANA",
+            "BUF",
+            "BOS",
+            "TBL",
+            "MTL",
+            "CAR",
+            "OTT",
+            "PIT",
+            "PHI",
+        ]
+
+        ordered = _playoff_matchup_ring_order(field)
+
+        self.assertEqual(
+            ordered,
+            ["CAR", "OTT", "PIT", "PHI", "MTL", "TBL", "BOS", "BUF", "VGK", "UTA", "EDM", "ANA", "MIN", "DAL", "LAK", "COL"],
+        )
+
+    def test_finished_series_overrides_points_projection(self) -> None:
+        pts = {"BOS": 110.0, "OTT": 95.0}
+        series_scores = {("BOS", "OTT"): {"BOS": 2, "OTT": 4}}
+
+        winner = _pick_bracket_winner("BOS", "OTT", pts, series_scores)
+
+        self.assertEqual(winner, "OTT")
+
+    def test_in_progress_series_still_projects_next_round_matchup(self) -> None:
+        pts = {"BOS": 110.0, "OTT": 95.0}
+        series_scores = {("BOS", "OTT"): {"BOS": 2, "OTT": 1}}
+
+        winner = _pick_bracket_winner("BOS", "OTT", pts, series_scores)
+
+        self.assertEqual(winner, "BOS")
+
+    @patch("hockey_app.ui.tabs.models_playoff_picture.regular_season_reference_day", return_value=dt.date(2026, 4, 16))
+    def test_playoff_status_map_marks_finished_series_loser_eliminated(self, _reference_day) -> None:
+        statuses = playoff_status_map(
+            dt.date(2026, 4, 25),
+            {"BOS": 110.0, "OTT": 95.0},
+            {},
+            league="NHL",
+            series_scores={("BOS", "OTT"): {"BOS": 4, "OTT": 2}},
+        )
+
+        self.assertEqual(statuses.get("OTT"), "eliminated")
+
+    def test_round_started_snapshot_excludes_future_rounds(self) -> None:
+        root = ET.fromstring(
+            """
+            <games>
+              <day date="2026-04-20">
+                <game league="NHL" id="2025030111" game_type="3" away_code="A" home_code="B" />
+              </day>
+              <day date="2026-05-05">
+                <game league="NHL" id="2025030211" game_type="3" away_code="C" home_code="D" />
+              </day>
+            </games>
+            """
+        )
+
+        before_round_two = _playoff_rounds_started_from_xml_root(root, dt.date(2026, 5, 4))
+        first_day_round_two = _playoff_rounds_started_from_xml_root(root, dt.date(2026, 5, 5))
+
+        self.assertEqual(before_round_two, {1})
+        self.assertEqual(first_day_round_two, {1, 2})
+
+
+class PlayoffSeriesProbabilityTests(unittest.TestCase):
+    def test_series_probability_table_uses_live_game_branch_when_available(self) -> None:
+        team_strength = {"BOS": 0.58, "OTT": 0.55}
+        table = series_probability_table(
+            "BOS",
+            "OTT",
+            team_strength=team_strength,
+            series_scores={("BOS", "OTT"): {"BOS": 2, "OTT": 1}},
+            live_series_probs={("BOS", "OTT"): {"away": "BOS", "home": "OTT", "away_prob": 0.2, "home_prob": 0.8}},
+        )
+
+        self.assertAlmostEqual(float(table["live_a_prob"]), 0.2)
+        self.assertGreater(float(table["a_win"]) + float(table["b_win"]), 0.99)
+        self.assertLessEqual(float(table["a_win"]) + float(table["b_win"]), 1.01)
+
+    def test_series_lengths_zero_out_impossible_results_after_games_are_played(self) -> None:
+        ana = _best_of_7_lengths_from_score(0.5, 2, 1)
+        edm = _best_of_7_lengths_from_score(0.5, 1, 2)
+
+        self.assertEqual(ana[0], 0.0)
+        self.assertEqual(edm[0], 0.0)
+        self.assertEqual(edm[1], 0.0)
+        self.assertAlmostEqual(sum(ana), 0.6875)
+        self.assertAlmostEqual(sum(edm), 0.3125)
+        self.assertGreater(ana[1], 0.0)
+        self.assertGreater(ana[2], 0.0)
+        self.assertGreater(ana[3], 0.0)
+        self.assertGreater(edm[2], 0.0)
+        self.assertGreater(edm[3], 0.0)
+
+    def test_finished_series_collapses_to_actual_length(self) -> None:
+        probs = _best_of_7_lengths_from_score(0.6, 4, 1)
+        self.assertEqual(probs, (0.0, 1.0, 0.0, 0.0))
+
+
+if __name__ == "__main__":
+    unittest.main()

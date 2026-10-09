@@ -1,0 +1,333 @@
+import SwiftUI
+import WidgetKit
+
+struct TeamGameEntry: TimelineEntry {
+    let date: Date
+    let game: WidgetGame?
+    let hasSnapshot: Bool
+}
+
+struct TeamGameProvider: TimelineProvider {
+    func placeholder(
+        in context: Context
+    ) -> TeamGameEntry {
+        TeamGameEntry(
+            date: Date(),
+            game: nil,
+            hasSnapshot: false
+        )
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (TeamGameEntry) -> Void
+    ) {
+        completion(makeEntry())
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<TeamGameEntry>) -> Void
+    ) {
+        let entry = makeEntry()
+
+        completion(
+            Timeline(
+                entries: [entry],
+                policy: .after(
+                    Date().addingTimeInterval(15 * 60)
+                )
+            )
+        )
+    }
+
+    private func makeEntry() -> TeamGameEntry {
+        guard let snapshot = WidgetSnapshotStore.load() else {
+            return TeamGameEntry(
+                date: Date(),
+                game: nil,
+                hasSnapshot: false
+            )
+        }
+
+        let teamCode =
+            favoriteTeamCode(from: snapshot)
+            ?? "NYR"
+
+        let game =
+            selectGame(
+                for: teamCode,
+                from: snapshot.games
+            )
+
+        return TeamGameEntry(
+            date: Date(),
+            game: game,
+            hasSnapshot: true
+        )
+    }
+
+    private func favoriteTeamCode(
+        from snapshot: WidgetSnapshot
+    ) -> String? {
+        guard let favoriteID = snapshot.favoriteTeamID else {
+            return nil
+        }
+
+        for game in snapshot.games {
+            if game.awayTeam.id == favoriteID {
+                return game.awayTeam.abbreviation.uppercased()
+            }
+
+            if game.homeTeam.id == favoriteID {
+                return game.homeTeam.abbreviation.uppercased()
+            }
+        }
+
+        return nil
+    }
+
+    private func selectGame(
+        for teamCode: String,
+        from games: [WidgetGame]
+    ) -> WidgetGame? {
+        let matches =
+            games
+                .filter {
+                    $0.containsTeam(teamCode)
+                }
+                .sorted {
+                    $0.startTime < $1.startTime
+                }
+
+        if let today =
+            matches.first(
+                where: { $0.isToday }
+            ) {
+            return today
+        }
+
+        if let future =
+            matches.first(
+                where: {
+                    $0.startTime > Date()
+                    && $0.phase == .scheduled
+                }
+            ) {
+            return future
+        }
+
+        return matches
+            .filter {
+                $0.phase == .final
+            }
+            .sorted {
+                $0.startTime > $1.startTime
+            }
+            .first
+    }
+}
+
+struct TeamGameWidgetView: View {
+    let entry: TeamGameEntry
+
+    var body: some View {
+        Group {
+            if let game = entry.game {
+                gameView(game)
+            } else {
+                emptyView
+            }
+        }
+        .widgetURL(
+            URL(string: "iceometrics://scoreboard")
+        )
+        .containerBackground(
+            Color(
+                red: 0.035,
+                green: 0.040,
+                blue: 0.050
+            ),
+            for: .widget
+        )
+    }
+
+    private func gameView(
+        _ game: WidgetGame
+    ) -> some View {
+        ZStack {
+            splitBackground(game)
+
+            VStack(spacing: 5) {
+                HStack {
+                    WidgetTeamLogoView(
+                        team: game.awayTeam,
+                        size: 45
+                    )
+
+                    Spacer()
+
+                    WidgetTeamLogoView(
+                        team: game.homeTeam,
+                        size: 45
+                    )
+                }
+
+                Spacer(minLength: 2)
+
+                if game.phase == .live
+                    || game.phase == .intermission
+                    || game.phase == .final {
+                    Text(
+                        "\(game.awayScore ?? 0)  \(game.homeScore ?? 0)"
+                    )
+                    .font(
+                        .system(
+                            size: 29,
+                            weight: .black,
+                            design: .rounded
+                        )
+                    )
+                    .monospacedDigit()
+                } else {
+                    Text("VS")
+                        .font(
+                            .system(
+                                size: 26,
+                                weight: .black,
+                                design: .rounded
+                            )
+                        )
+                }
+
+                Text(game.detail)
+                    .font(
+                        .system(
+                            size: 10,
+                            weight: .bold
+                        )
+                    )
+                    .opacity(0.82)
+
+                Spacer(minLength: 2)
+
+                HStack {
+                    probability(
+                        game.awayProbability
+                    )
+
+                    Spacer()
+
+                    probability(
+                        game.homeProbability
+                    )
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(12)
+        }
+    }
+
+    private func splitBackground(
+        _ game: WidgetGame
+    ) -> some View {
+        GeometryReader { proxy in
+            let share =
+                max(
+                    0,
+                    min(
+                        1,
+                        game.awayProbability ?? 0.5
+                    )
+                )
+
+            let split =
+                proxy.size.width * share
+
+            HStack(spacing: 0) {
+                Color(
+                    widgetHex:
+                        game.awayTeam.accentHex
+                )
+                .frame(width: split)
+
+                Color(
+                    widgetHex:
+                        game.homeTeam.accentHex
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .overlay {
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.03),
+                        .black.opacity(0.23)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+    }
+
+    private func probability(
+        _ value: Double?
+    ) -> some View {
+        Text(
+            value.map {
+                "\(Int(($0 * 100).rounded()))%"
+            } ?? "—"
+        )
+        .font(
+            .system(
+                size: 17,
+                weight: .black,
+                design: .rounded
+            )
+        )
+        .monospacedDigit()
+    }
+
+    private var emptyView: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "hockey.puck.fill")
+                .font(.title2)
+
+            Text(
+                entry.hasSnapshot
+                ? "NO TEAM GAME"
+                : "OPEN ICEOMETRICS"
+            )
+            .font(.caption.bold())
+        }
+        .foregroundStyle(.white)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity
+        )
+    }
+}
+
+struct TeamGameWidget: Widget {
+    let kind = "IceometricsTeamGameV3"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(
+            kind: kind,
+            provider: TeamGameProvider()
+        ) { entry in
+            TeamGameWidgetView(
+                entry: entry
+            )
+        }
+        .configurationDisplayName(
+            "Team Game"
+        )
+        .description(
+            "Current or next game for your favorite NHL team."
+        )
+        .supportedFamilies([
+            .systemSmall
+        ])
+    }
+}
