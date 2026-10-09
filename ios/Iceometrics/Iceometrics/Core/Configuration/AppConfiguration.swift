@@ -8,7 +8,7 @@ nonisolated enum AppDataMode: Sendable {
 
 nonisolated enum AppConfiguration {
     static let dataMode: AppDataMode = .sharedWebSnapshot(
-        baseURL: URL(string: "https://akapppy.github.io/Hockey_App/")!,
+        baseURL: URL(string: "https://akapppy.github.io/Iceometrics/")!,
         season: "2026-2027"
     )
 

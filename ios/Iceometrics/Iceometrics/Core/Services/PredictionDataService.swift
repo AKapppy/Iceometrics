@@ -7,7 +7,7 @@ actor PredictionDataService {
     private let exportStore: SharedSeasonExportDataStore
 
     init(
-        baseURL: URL = URL(string: "https://akapppy.github.io/Hockey_App/")!,
+        baseURL: URL = URL(string: "https://akapppy.github.io/Iceometrics/")!,
         season: String = "2026-2027",
         client: APIClient = APIClient(),
         exportStore: SharedSeasonExportDataStore = .shared

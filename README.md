@@ -1,6 +1,6 @@
 # Hockey App
 
-[Launch the web app](https://akapppy.github.io/Hockey_App/)
+[Launch the web app](https://akapppy.github.io/Iceometrics/)
 
 Desktop hockey dashboard app (Tkinter) with:
 - Predictions (MoneyPuck simulation tables + charts)
@@ -30,7 +30,7 @@ The web app lives in `docs/` and can still run as a static GitHub Pages site. St
 Open the hosted version:
 
 ```text
-https://akapppy.github.io/Hockey_App/
+https://akapppy.github.io/Iceometrics/
 ```
 
 Build or refresh the static data from local cached MoneyPuck CSVs:
