@@ -1153,6 +1153,17 @@ def _write_season_archives(out_dir: Path, payloads: list[dict[str, Any]]) -> lis
         season = str((payload.get("metadata") or {}).get("season") or "")
         if season:
             by_season[season] = payload
+    # Preserve tracked historical season archives when exporting the live season.
+    # GitHub Actions checks out docs/seasons from Git on each fresh runner.
+    for archive in sorted((out_dir / "seasons").glob("*/data.json")):
+        try:
+            raw_archived = json.loads(archive.read_text(encoding="utf-8"))
+            archived = _prepare_season_payload(raw_archived)
+            archived_season = str((archived.get("metadata") or {}).get("season") or "")
+            if archived_season == archive.parent.name and archived_season not in by_season:
+                by_season[archived_season] = archived
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"WARNING: Cannot read archived season {archive}: {exc}")
     seasons = sorted(by_season, reverse=True)
     for payload in by_season.values():
         payload["metadata"]["availableSeasons"] = seasons
