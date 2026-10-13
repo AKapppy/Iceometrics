@@ -80,10 +80,25 @@ struct PredictionPieChartView: View {
                         let x = center.x + radius * cos(radians)
                         let y = center.y + radius * sin(radians)
                         let arcLength = CGFloat(slice.extent * .pi / 180) * radius
-                        let logoSize: CGFloat =
-                            horizontalSizeClass == .compact ? 22 : 28
+                        // Fit the *entire square* logo into the annular sector.
+                        // A square's corners extend farther than its frame midpoint;
+                        // arc length alone can let corners cross wedge edges.
+                        let radialClearance = max(0, min(
+                            radius - outerRingInner,
+                            outerRadius - radius
+                        ))
+                        let halfWedgeAngle = CGFloat(min(slice.extent, 180)) * .pi / 360
+                        let angularClearance = max(0, radius * sin(halfWedgeAngle))
+                        let safeSquareSide = min(
+                            radialClearance,
+                            angularClearance
+                        ) * CGFloat(2).squareRoot() * 0.92
+                        let logoSize = min(
+                            horizontalSizeClass == .compact ? CGFloat(30) : CGFloat(44),
+                            max(0, min(safeSquareSide, arcLength * 0.75))
+                        )
 
-                        if arcLength >= 18 {
+                        if logoSize >= 12 {
                             PredictionPieLogo(team: slice.team)
                                 .frame(width: logoSize, height: logoSize)
                                 .position(x: x, y: y)

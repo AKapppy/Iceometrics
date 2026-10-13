@@ -318,18 +318,18 @@ private struct FullPlayoffBracketGraphic: View {
     let picture: ModelPlayoffPicture
     let teams: [ModelTeam]
 
-    private let height: CGFloat = 222
-    private let logoSize: CGFloat = 18
+    private let height: CGFloat = 650
+    private let logoSize: CGFloat = 30
 
-    private let round1Y: [CGFloat] = [24, 44, 68, 88, 132, 152, 176, 196]
-    private let round2Y: [CGFloat] = [34, 78, 142, 186]
-    private let conferenceFinalY: [CGFloat] = [56, 164]
-    private let conferenceChampionY: CGFloat = 110
-    private let cupWinnerY: CGFloat = 110
+    private let round1Y: [CGFloat] = [90, 138, 194, 242, 416, 464, 520, 568]
+    private let round2Y: [CGFloat] = [114, 218, 440, 544]
+    private let conferenceFinalY: [CGFloat] = [166, 492]
+    private let conferenceChampionY: CGFloat = 328
+    private let cupWinnerY: CGFloat = 328
 
-    private var eastRound1: [String] { picture.east.round1.flatMap(normalizedPair) }
-    private var eastRound2: [String] { picture.east.round2.flatMap(normalizedPair) }
-    private var eastFinal: [String] { normalizedPair(picture.east.finalMatchup) }
+    private var eastRound1: [String] { let pairs = picture.east.round1.map(normalizedPair); return (Array(pairs.dropFirst(2)) + Array(pairs.prefix(2))).flatMap { $0 } }
+    private var eastRound2: [String] { let pairs = picture.east.round2.map(normalizedPair); return (Array(pairs.dropFirst(1)) + Array(pairs.prefix(1))).flatMap { $0 } }
+    private var eastFinal: [String] { Array(normalizedPair(picture.east.finalMatchup).reversed()) }
     private var westRound1: [String] { picture.west.round1.flatMap(normalizedPair) }
     private var westRound2: [String] { picture.west.round2.flatMap(normalizedPair) }
     private var westFinal: [String] { normalizedPair(picture.west.finalMatchup) }
@@ -337,11 +337,11 @@ private struct FullPlayoffBracketGraphic: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Eastern Conference")
+                Text("Western Conference")
                 Spacer()
                 Text("Stanley Cup")
                 Spacer()
-                Text("Western Conference")
+                Text("Eastern Conference")
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -430,20 +430,37 @@ private struct FullPlayoffBracketGraphic: View {
                     roundHeader("CF", x: w3)
                     roundHeader("Cup", x: centerX)
 
-                    bracketNodes(eastRound1, x: e1, y: round1Y)
-                    bracketNodes(eastRound2, x: e2, y: round2Y)
-                    bracketNodes(eastFinal, x: e3, y: conferenceFinalY)
+                    Text("CENTRAL")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .position(x: e1 + 36, y: 48)
+                    Text("PACIFIC")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .position(x: e1 + 36, y: 365)
+                    Text("METRO")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .position(x: w1 - 36, y: 48)
+                    Text("ATLANTIC")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .position(x: w1 - 36, y: 365)
+
+                    bracketNodes(westRound1, x: e1, y: round1Y)
+                    bracketNodes(westRound2, x: e2, y: round2Y)
+                    bracketNodes(westFinal, x: e3, y: conferenceFinalY)
                     bracketNodes(
-                        picture.east.champion.isEmpty ? [""] : [picture.east.champion],
+                        picture.west.champion.isEmpty ? [""] : [picture.west.champion],
                         x: e4,
                         y: [conferenceChampionY]
                     )
 
-                    bracketNodes(westRound1, x: w1, y: round1Y)
-                    bracketNodes(westRound2, x: w2, y: round2Y)
-                    bracketNodes(westFinal, x: w3, y: conferenceFinalY)
+                    bracketNodes(eastRound1, x: w1, y: round1Y)
+                    bracketNodes(eastRound2, x: w2, y: round2Y)
+                    bracketNodes(eastFinal, x: w3, y: conferenceFinalY)
                     bracketNodes(
-                        picture.west.champion.isEmpty ? [""] : [picture.west.champion],
+                        picture.east.champion.isEmpty ? [""] : [picture.east.champion],
                         x: w4,
                         y: [conferenceChampionY]
                     )
@@ -480,7 +497,7 @@ private struct FullPlayoffBracketGraphic: View {
     @ViewBuilder
     private func roundHeader(_ title: String, x: CGFloat) -> some View {
         Text(title)
-            .font(.system(size: 8, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.secondary)
             .position(x: x, y: 7)
     }
@@ -604,7 +621,7 @@ private struct MagicTragicPanel: View {
     let snapshot: ModelMagicTragic
     let teams: [ModelTeam]
 
-    @State private var mode: MagicDisplayMode = .both
+    @State private var mode: MagicDisplayMode = .magic
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -656,11 +673,11 @@ private struct MagicConferenceTable: View {
     let teams: [ModelTeam]
     let mode: MagicDisplayMode
 
-    private let teamWidth: CGFloat = 116
-    private let statWidth: CGFloat = 48
+    private let teamWidth: CGFloat = 98
+    private let statWidth: CGFloat = 42
 
     private var cellWidth: CGFloat {
-        mode == .both ? 84 : 60
+        mode == .both ? 74 : 53
     }
 
     var body: some View {
@@ -703,6 +720,13 @@ private struct MagicConferenceTable: View {
                                 width: cellWidth,
                                 height: 36
                             )
+                            .overlay(alignment: .leading) {
+                                if index == 0 {
+                                    Rectangle()
+                                        .fill(Color.primary.opacity(0.55))
+                                        .frame(width: 2.5)
+                                }
+                            }
                         }
                     }
                 }
@@ -740,11 +764,18 @@ private struct MagicConferenceTable: View {
             ForEach(
                 Array(conference.columns.enumerated()),
                 id: \.offset
-            ) { _, column in
+            ) { index, column in
                 headerCell(
                     column,
                     width: cellWidth
                 )
+                .overlay(alignment: .leading) {
+                    if index == 0 {
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.55))
+                            .frame(width: 2.5)
+                    }
+                }
             }
         }
     }
@@ -767,7 +798,7 @@ private struct MagicConferenceTable: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 5)
         .frame(
             width: teamWidth,
             height: 36,
@@ -777,7 +808,7 @@ private struct MagicConferenceTable: View {
             Color.primary.opacity(0.025)
         )
         .overlay(alignment: .bottom) {
-            Divider()
+            Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
         }
     }
 
@@ -799,10 +830,10 @@ private struct MagicConferenceTable: View {
                 Color.primary.opacity(0.018)
             )
             .overlay(alignment: .leading) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5)
             }
             .overlay(alignment: .bottom) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
             }
     }
 
@@ -827,10 +858,10 @@ private struct MagicConferenceTable: View {
                 Color.primary.opacity(0.055)
             )
             .overlay(alignment: .leading) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5)
             }
             .overlay(alignment: .bottom) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
             }
     }
 
@@ -877,10 +908,10 @@ private struct ModelMagicCell: View {
             )
             .background(background)
             .overlay(alignment: .leading) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5)
             }
             .overlay(alignment: .bottom) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
             }
     }
 
@@ -912,9 +943,9 @@ private struct PointProbabilitiesPanel: View {
     let snapshot: ModelPointProbabilities
     let teams: [ModelTeam]
 
-    private let teamWidth: CGFloat = 116
-    private let predictionWidth: CGFloat = 58
-    private let probabilityWidth: CGFloat = 62
+    private let teamWidth: CGFloat = 98
+    private let predictionWidth: CGFloat = 52
+    private let probabilityWidth: CGFloat = 54
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1002,7 +1033,7 @@ private struct PointProbabilitiesPanel: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 5)
             .frame(
                 width: teamWidth,
                 height: 36,
@@ -1012,7 +1043,7 @@ private struct PointProbabilitiesPanel: View {
                 Color.primary.opacity(0.025)
             )
             .overlay(alignment: .bottom) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
             }
 
             Text("\(row.prediction)")
@@ -1031,10 +1062,12 @@ private struct PointProbabilitiesPanel: View {
                     Color.accentColor.opacity(0.08)
                 )
                 .overlay(alignment: .leading) {
-                    Divider()
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.10))
+                        .frame(width: 1)
                 }
                 .overlay(alignment: .bottom) {
-                    Divider()
+                    Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
                 }
 
             ForEach(
@@ -1071,10 +1104,12 @@ private struct PointProbabilitiesPanel: View {
                         : Color.clear
                 )
                 .overlay(alignment: .leading) {
-                    Divider()
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.10))
+                        .frame(width: 1)
                 }
                 .overlay(alignment: .bottom) {
-                    Divider()
+                    Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
                 }
             }
         }
@@ -1101,10 +1136,12 @@ private struct PointProbabilitiesPanel: View {
                 Color.primary.opacity(0.055)
             )
             .overlay(alignment: .leading) {
-                Divider()
+                Rectangle()
+                    .fill(Color.primary.opacity(0.10))
+                    .frame(width: 1)
             }
             .overlay(alignment: .bottom) {
-                Divider()
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5)
             }
     }
 }
@@ -1114,6 +1151,7 @@ private struct PointProbabilitiesPanel: View {
 private struct PlayoffWinProbabilitiesPanel: View {
     let snapshot: ModelPlayoffWinProbabilities
     let teams: [ModelTeam]
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1139,8 +1177,8 @@ private struct PlayoffWinProbabilitiesPanel: View {
                                 columns: [
                                     GridItem(
                                         .adaptive(
-                                            minimum: 340,
-                                            maximum: 520
+                                            minimum: horizontalSizeClass == .compact ? 300 : 430,
+                                            maximum: 560
                                         ),
                                         spacing: 12
                                     )
@@ -1167,6 +1205,26 @@ private struct PlayoffWinProbabilitiesPanel: View {
 private struct ModelSeriesProbabilityCard: View {
     let series: ModelSeriesProbability
     let teams: [ModelTeam]
+
+    // Evaluate all ten numerical cells as one table, not row-by-row.
+    // Exactly one highest-probability cell gets the accent highlight.
+    private var highestCellIndex: Int {
+        // Compare only the eight *exact* outcomes (A/B in 4/5/6/7).
+        // The Win column is an aggregate of four outcomes, not another outcome.
+        // Keep the first outcome on ties, matching Python's max(...) ordering.
+        let outcomes = Array(series.aProbabilities.prefix(4))
+            + Array(series.bProbabilities.prefix(4))
+        guard !outcomes.isEmpty else { return 0 }
+        return outcomes.indices.reduce(0) { current, index in
+            outcomes[index] > outcomes[current] + 0.0000000001
+                ? index : current
+        }
+    }
+
+    private var displayedPrediction: String {
+        let index = highestCellIndex
+        return "\(index < 4 ? series.a : series.b) in \(4 + index % 4)"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -1201,7 +1259,7 @@ private struct ModelSeriesProbabilityCard: View {
 
                 Spacer()
 
-                Text(series.prediction)
+                Text(displayedPrediction)
                     .font(.caption.weight(.semibold))
                     .padding(
                         .horizontal,
@@ -1234,14 +1292,14 @@ private struct ModelSeriesProbabilityCard: View {
                     team: series.a,
                     winProbability: series.aWin,
                     probabilities: series.aProbabilities,
-                    isWinner: series.winner == series.a
+                    probabilityOffset: 0
                 )
 
                 seriesProbabilityRow(
                     team: series.b,
                     winProbability: series.bWin,
                     probabilities: series.bProbabilities,
-                    isWinner: series.winner == series.b
+                    probabilityOffset: 4
                 )
             }
             .clipShape(
@@ -1285,7 +1343,7 @@ private struct ModelSeriesProbabilityCard: View {
         team: String,
         winProbability: Double,
         probabilities: [Double],
-        isWinner: Bool
+        probabilityOffset: Int
     ) -> some View {
         GridRow {
             HStack(spacing: 5) {
@@ -1295,27 +1353,25 @@ private struct ModelSeriesProbabilityCard: View {
                         teams: teams
                     ),
                     code: team,
-                    size: 22
+                    size: 21
                 )
 
                 Text(team)
                     .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .frame(
-                maxWidth: .infinity,
+                minWidth: 74,
                 minHeight: 34,
                 alignment: .leading
             )
             .padding(.horizontal, 6)
-            .background(
-                isWinner
-                    ? Color.accentColor.opacity(0.10)
-                    : Color.primary.opacity(0.018)
-            )
+            .background(Color.primary.opacity(0.018))
 
             probabilityCell(
                 winProbability,
-                emphasis: true
+                emphasis: false
             )
 
             ForEach(0..<4, id: \.self) { index in
@@ -1323,7 +1379,7 @@ private struct ModelSeriesProbabilityCard: View {
                     index < probabilities.count
                         ? probabilities[index]
                         : 0,
-                    emphasis: false
+                    emphasis: probabilityOffset + index == highestCellIndex
                 )
             }
         }
@@ -1339,7 +1395,7 @@ private struct ModelSeriesProbabilityCard: View {
                 maxWidth: .infinity,
                 minHeight: 30
             )
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
             .background(
                 Color.primary.opacity(0.055)
             )
@@ -1367,7 +1423,7 @@ private struct ModelSeriesProbabilityCard: View {
             maxWidth: .infinity,
             minHeight: 34
         )
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 2)
         .background(
             emphasis
                 ? Color.accentColor.opacity(0.055)

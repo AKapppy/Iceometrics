@@ -500,7 +500,6 @@ struct ScoreboardView: View {
         "poll-\(selectedDatePredictionKey)"
     }
 
-    @ViewBuilder
     private func dateHeaderText(
         format: String,
         fixedWidth: Bool

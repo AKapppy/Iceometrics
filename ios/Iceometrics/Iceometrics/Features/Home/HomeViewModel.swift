@@ -19,6 +19,9 @@ final class HomeViewModel: ObservableObject {
     private var baseGamesByDay: [Date: [HockeyGame]] = [:]
     private var availableGameDatesCache: [Date] = []
 
+    // Stable, de-duplicated team palette for the app's accent color.
+    private(set) var accentTeams: [Team] = []
+
     init(
         repository: any HockeyRepositoryProtocol,
         liveScoreService: NHLLiveScoreService = NHLLiveScoreService()
@@ -112,7 +115,22 @@ final class HomeViewModel: ObservableObject {
     func loadIfNeeded() async {
         guard !hasLoaded else { return }
         hasLoaded = true
+
+        // Put cached games on screen immediately, just as before.
         await load(forceRefresh: false)
+
+        // When the first load came from disk, automatically perform the
+        // same network refresh as the toolbar button. Do this once per
+        // launch and off the critical startup path, so opening the app
+        // never waits for a second full-season download.
+        if case .some(.cache) = origin {
+            Task(priority: .utility) { [weak self] in
+                await self?.load(
+                    forceRefresh: true,
+                    displayLoading: false
+                )
+            }
+        }
     }
 
     func refresh() async {
@@ -180,8 +198,13 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    private func load(forceRefresh: Bool) async {
-        loadState = .loading
+    private func load(
+        forceRefresh: Bool,
+        displayLoading: Bool = true
+    ) async {
+        if displayLoading {
+            loadState = .loading
+        }
 
         do {
             let result = try await repository.loadSnapshot(
@@ -229,5 +252,20 @@ final class HomeViewModel: ObservableObject {
         baseGamesSorted = sorted
         baseGamesByDay = grouped
         availableGameDatesCache = grouped.keys.sorted()
+
+        // The root tint must not build a 2,800+ element team array
+        // every time SwiftUI redraws or a live game updates.
+        var seenTeamIDs: Set<String> = []
+        var uniqueTeams: [Team] = []
+        uniqueTeams.reserveCapacity(40)
+        for game in sorted {
+            if seenTeamIDs.insert(game.awayTeam.id).inserted {
+                uniqueTeams.append(game.awayTeam)
+            }
+            if seenTeamIDs.insert(game.homeTeam.id).inserted {
+                uniqueTeams.append(game.homeTeam)
+            }
+        }
+        accentTeams = uniqueTeams
     }
 }

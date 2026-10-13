@@ -474,7 +474,7 @@ private struct TeamStatsTable: View {
     let onSort: (TeamSortKey) -> Void
 
     private let rowHeight: CGFloat = 40
-    private var teamWidth: CGFloat { compact ? 82 : 94 }
+    private var teamWidth: CGFloat { compact ? 78 : 86 }
 
     private var columns: [FrozenGridColumn<TeamSortKey>] {
         if compact {
@@ -495,16 +495,16 @@ private struct TeamStatsTable: View {
         }
 
         return [
-            FrozenGridColumn(id: .record, width: 102),
-            FrozenGridColumn(id: .gp, width: 60),
-            FrozenGridColumn(id: .w, width: 60),
-            FrozenGridColumn(id: .l, width: 60),
-            FrozenGridColumn(id: .pts, width: 64),
-            FrozenGridColumn(id: .gf, width: 60),
-            FrozenGridColumn(id: .ga, width: 60),
-            FrozenGridColumn(id: .gd, width: 60),
-            FrozenGridColumn(id: .pointsPercentage, width: 72),
-            FrozenGridColumn(id: .winPercentage, width: 72),
+            FrozenGridColumn(id: .record, width: 96),
+            FrozenGridColumn(id: .gp, width: 48),
+            FrozenGridColumn(id: .w, width: 46),
+            FrozenGridColumn(id: .l, width: 46),
+            FrozenGridColumn(id: .pts, width: 48),
+            FrozenGridColumn(id: .gf, width: 46),
+            FrozenGridColumn(id: .ga, width: 46),
+            FrozenGridColumn(id: .gd, width: 46),
+            FrozenGridColumn(id: .pointsPercentage, width: 64),
+            FrozenGridColumn(id: .winPercentage, width: 64),
         ]
     }
 
@@ -535,7 +535,7 @@ private struct TeamStatsTable: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .overlay {
@@ -775,8 +775,8 @@ private struct GameStatsTableView: View {
     @Binding var selectedTeamCode: String?
 
     private let rowHeight: CGFloat = 40
-    private let teamWidth: CGFloat = 94
-    private let dateWidth: CGFloat = 64
+    private let teamWidth: CGFloat = 90
+    private let dateWidth: CGFloat = 58
 
     private var todayIndex: Int {
         statsTodayColumnIndex(table.columns)
@@ -831,7 +831,7 @@ private struct GameStatsTableView: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .overlay {
@@ -934,35 +934,37 @@ private struct PlayerStatsPanel: View {
                             PlayerCategoryPanel(
                                 title: "Skaters",
                                 players: data.skaters,
-                                options: ["All", "Goals", "Assists", "Points", "Hits", "Blocks", "+/-", "PIM"],
-                                allStats: ["Goals", "Assists", "Points"],
+                                options: ["All", "Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
+                                allStats: ["Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                                 snapshot: snapshot
                             )
                             PlayerCategoryPanel(
                                 title: "Goalies",
                                 players: data.goalies,
-                                options: ["All", "Wins", "Save %", "Shutouts", "Saves / GS", "GAA"],
-                                allStats: ["Wins", "Save %", "Shutouts"],
+                                options: ["All", "Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
+                                allStats: ["Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                                 snapshot: snapshot
                             )
                         }
                     }
                 } else {
-                    HStack(alignment: .top, spacing: 14) {
+                    ScrollView(.vertical) {
+                        HStack(alignment: .top, spacing: 14) {
                         PlayerCategoryPanel(
                             title: "Skaters",
                             players: data.skaters,
-                            options: ["All", "Goals", "Assists", "Points", "Hits", "Blocks", "+/-", "PIM"],
-                            allStats: ["Goals", "Assists", "Points"],
+                            options: ["All", "Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
+                            allStats: ["Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                             snapshot: snapshot
                         )
                         PlayerCategoryPanel(
                             title: "Goalies",
                             players: data.goalies,
-                            options: ["All", "Wins", "Save %", "Shutouts", "Saves / GS", "GAA"],
-                            allStats: ["Wins", "Save %", "Shutouts"],
+                            options: ["All", "Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
+                            allStats: ["Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                             snapshot: snapshot
                         )
+                        }
                     }
                 }
             } else if let message = viewModel.playerErrorMessage {
@@ -1019,6 +1021,7 @@ private struct PlayerCategoryPanel: View {
             }
 
             if selectedStat == "All" {
+                LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach(allStats, id: \.self) { stat in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(stat)
@@ -1037,6 +1040,7 @@ private struct PlayerCategoryPanel: View {
                             }
                         }
                     }
+                }
                 }
             } else {
                 LazyVStack(spacing: 0) {
@@ -1283,8 +1287,8 @@ private struct HistoryStatsPanel: View {
     let allowNegative: Bool
 
     private let rowHeight: CGFloat = 38
-    private let teamWidth: CGFloat = 94
-    private let dateWidth: CGFloat = 62
+    private let teamWidth: CGFloat = 90
+    private let dateWidth: CGFloat = 58
 
     private var todayIndex: Int {
         statsTodayColumnIndex(table.columns)
@@ -1309,7 +1313,7 @@ private struct HistoryStatsPanel: View {
             TimelineGraphSeries(
                 id: team.code,
                 color: Color(hex: team.colorHex),
-                values: carriedValues(for: team.code),
+                values: table.rows[team.code] ?? [],
                 lineWidth: lineWidth(team),
                 opacity: lineOpacity(team)
             )
@@ -1369,7 +1373,7 @@ private struct HistoryStatsPanel: View {
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, 4)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background)
                     .overlay {
@@ -1496,9 +1500,9 @@ private struct HistoryStatsPanel: View {
         teamCode: String,
         columnIndex: Int
     ) -> Double? {
-        let values = carriedValues(for: teamCode)
-        guard values.indices.contains(columnIndex) else { return nil }
-        return values[columnIndex]
+        // Empty values represent a game still in progress (or scheduled).
+        // Keep the previous result for graph continuity, but not for table cells.
+        return table.value(teamCode: teamCode, columnIndex: columnIndex)
     }
 
     private func columnBounds(_ index: Int) -> (low: Double, high: Double) {
@@ -1513,11 +1517,26 @@ private struct HistoryStatsPanel: View {
         high: Double
     ) -> Color {
         guard let value else { return .clear }
-        guard high > low else { return Color.accentColor.opacity(0.07) }
 
+        if allowNegative {
+            // Goal differential: zero = neutral gray; positive = blue;
+            // negative = red. A symmetric domain treats +/- N equally.
+            let maximum = max(1.0, max(abs(low), abs(high)))
+            let strength = min(abs(value) / maximum, 1.0)
+            let neutral = (r: 0.48, g: 0.50, b: 0.54)
+            let target = value >= 0
+                ? (r: 0.12, g: 0.41, b: 0.92)
+                : (r: 0.89, g: 0.18, b: 0.27)
+            return Color(
+                red: neutral.r + (target.r - neutral.r) * strength,
+                green: neutral.g + (target.g - neutral.g) * strength,
+                blue: neutral.b + (target.b - neutral.b) * strength
+            ).opacity(0.30)
+        }
+
+        guard high > low else { return Color.accentColor.opacity(0.07) }
         let rank = (value - low) / (high - low)
-        let base = allowNegative && value < 0 ? 0.025 : 0.04
-        return Color.accentColor.opacity(base + rank * 0.16)
+        return Color.accentColor.opacity(0.04 + rank * 0.16)
     }
 
     private func formatHistoryValue(_ value: Double?) -> String {

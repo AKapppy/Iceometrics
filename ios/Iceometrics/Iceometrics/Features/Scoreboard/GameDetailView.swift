@@ -700,7 +700,7 @@ struct GameDetailView: View {
     private var statusBadgeText: String {
         switch game.status {
         case .scheduled:
-            game.startTime.formatted(date: .omitted, time: .shortened)
+            return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
             if game.isIntermission == true {
                 return "\(periodLabel ?? "") Int"
@@ -717,9 +717,8 @@ struct GameDetailView: View {
         case .postponed:
             return "PPD"
         case .unknown:
-            game.startTime.formatted(date: .omitted, time: .shortened)
+            return game.startTime.formatted(date: .omitted, time: .shortened)
         }
-        return ""
     }
 
     private var periodLabel: String? {
@@ -732,7 +731,6 @@ struct GameDetailView: View {
         case 3: return "3rd"
         default: return "\(period)th"
         }
-        return ""
     }
 
     @MainActor

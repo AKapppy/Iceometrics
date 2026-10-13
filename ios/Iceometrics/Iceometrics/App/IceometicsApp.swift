@@ -15,8 +15,7 @@ struct IceometicsApp: App {
                 .environmentObject(settings)
                 .tint(
                     settings.accentColor(
-                        for: homeViewModel.games
-                            .flatMap { [$0.awayTeam, $0.homeTeam] }
+                        for: homeViewModel.accentTeams
                     )
                 )
                 .preferredColorScheme(
@@ -202,9 +201,10 @@ final class WidgetSnapshotCoordinator {
             )
         }
 
-        let pie = predictionSnapshot.flatMap(
-            makePieSnapshot
-        )
+        // ICEOMETRICS_PIE_PERSISTED_FALLBACK_V1
+        // If a transient network/export failure returns no usable wheel,
+        // preserve the last working pie already stored for WidgetKit.
+        let pie = predictionSnapshot.flatMap(makePieSnapshot) ?? cachedPie()
 
         let snapshot = AppWidgetSnapshot(
             generatedAt: Date(),
@@ -223,6 +223,37 @@ final class WidgetSnapshotCoordinator {
                 games: logoGames
             )
         }
+    }
+
+    private func cachedPie() -> AppWidgetPie? {
+        guard let root = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.akappy.Iceometrics"
+        ), let data = try? Data(contentsOf: root.appendingPathComponent("widget-snapshot.json")) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let cached = (try? decoder.decode(AppWidgetSnapshot.self, from: data))?.pie else {
+            return nil
+        }
+        // Recompute the label. A wheel saved yesterday as TODAY is no
+        // longer today's data when the app opens the following morning.
+        return AppWidgetPie(
+            dataDate: cached.dataDate,
+            label: Self.pieDateLabel(for: cached.dataDate),
+            rings: cached.rings
+        )
+    }
+
+    private static func pieDateLabel(for dataDate: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        let sourceDay = calendar.startOfDay(for: dataDate)
+        let today = calendar.startOfDay(for: Date())
+        let daysOld = calendar.dateComponents([.day], from: sourceDay, to: today).day ?? 0
+        if daysOld <= 0 { return "TODAY" }
+        if daysOld == 1 { return "YESTERDAY" }
+        return dataDate.formatted(.dateTime.month(.abbreviated).day())
     }
 
     private func fetchPredictionSnapshot()
@@ -456,8 +487,42 @@ final class WidgetSnapshotCoordinator {
             return nil
         }
 
-        let columnIndex =
-            referenceTable.columns.count - 1
+        // ICEOMETRICS_PIE_LAST_VALID_DATE_V1
+        // An exported date may exist before MoneyPuck has populated it.
+        // Fall back to the newest fully populated outer ring with actual
+        // data in the other published rounds. Do not fabricate today's odds.
+        guard let columnIndex = referenceTable.columns.indices.reversed().first(where: { index in
+            guard let dataDate = Self.dateForPredictionColumn(
+                referenceTable.columns[index],
+                season: snapshot.season
+            ), Self.startOfEasternDay(dataDate) <= Self.startOfEasternDay(Date()) else {
+                return false
+            }
+
+            let availableCount = referenceTable.rows.values.reduce(into: 0) { count, values in
+                if values.indices.contains(index), values[index] != nil {
+                    count += 1
+                }
+            }
+            // NHL simulations normally contain 32 teams; a nearly empty
+            // current-day file must not replace yesterday's complete wheel.
+            guard availableCount >= min(24, max(1, referenceTable.rows.count)) else {
+                return false
+            }
+
+            return metricOrder.allSatisfy { key in
+                guard let table = snapshot.tables[key],
+                      table.columns.indices.contains(index),
+                      table.columns[index] == referenceTable.columns[index] else {
+                    return false
+                }
+                return table.rows.values.contains { values in
+                    values.indices.contains(index) && (values[index] ?? 0) > 0
+                }
+            }
+        }) else {
+            return nil
+        }
 
         let rawColumn =
             referenceTable.columns[columnIndex]
@@ -585,16 +650,7 @@ final class WidgetSnapshotCoordinator {
             return nil
         }
 
-        let today =
-            Self.startOfEasternDay(Date())
-
-        let sourceDay =
-            Self.startOfEasternDay(dataDate)
-
-        let label =
-            sourceDay >= today
-            ? "TODAY"
-            : "YESTERDAY"
+        let label = Self.pieDateLabel(for: dataDate)
 
         return AppWidgetPie(
             dataDate: dataDate,
@@ -652,26 +708,6 @@ final class WidgetSnapshotCoordinator {
                 + String(describing: snapshot.favoriteTeamID)
             )
 
-            for game in snapshot.games {
-                print(
-                    "WIDGET GAME:",
-                    game.startTime,
-                    game.awayTeam.abbreviation,
-                    "@",
-                    game.homeTeam.abbreviation,
-                    "phase=",
-                    game.phase,
-                    "today=",
-                    game.isToday,
-                    "score=",
-                    String(describing: game.awayScore),
-                    "-",
-                    String(describing: game.homeScore),
-                    "prob=",
-                    String(describing: game.awayProbability),
-                    String(describing: game.homeProbability)
-                )
-            }
         } catch {
             print(
                 "Widget snapshot write failed: "

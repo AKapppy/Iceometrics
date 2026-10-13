@@ -36,3 +36,35 @@ docs/data.js
 docs/data.json
 docs/season-index.json
 docs/seasons/
+
+# macOS and Xcode
+.DS_Store
+**/xcuserdata/
+**/*.xcuserstate
+**/DerivedData/
+**/.build/
+*.xcresult
+
+# Local backups
+**/.terminal_patch_backups/
+**/.BlocksteadPatchBackups/
+**/Patch Backups/
+**/Regimented Marching Patch Backups/
+**/Stands-Tunes-Backup-*/
+**/LiveLink*Backup-*/
+**/*.backup-*
+**/*.before-*
+**/*.bak
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+**/Secrets.xcconfig
+
+# Local Xcode project backups
+/ios/Iceometrics/*.xcodeproj.backup-*/

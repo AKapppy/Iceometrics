@@ -68,6 +68,13 @@ struct RootView: View {
         .onOpenURL { url in
             handleDeepLink(url)
         }
+        // One concise debug breadcrumb per tab change helps correlate
+        // an inaccessible iPad page with a subsequent system hang report.
+        .onChange(of: selectedTab) { _, tab in
+            #if DEBUG
+            print("ICEOMETRICS TAB OPEN: \(String(describing: tab))")
+            #endif
+        }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 SettingsView(

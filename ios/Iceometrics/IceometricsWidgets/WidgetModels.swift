@@ -1,7 +1,52 @@
 import Foundation
 import SwiftUI
 import AppIntents
+#if canImport(UIKit)
 import UIKit
+#elseif os(macOS)
+import AppKit
+
+// The existing widget logo store downsamples to a CGImage and uses UIImage.
+// Reuse that same code on Mac with an NSImage bridge, without touching the
+// iPhone widget layouts or the 192-pixel safety limit.
+typealias UIImage = NSImage
+
+extension NSImage {
+    convenience init(cgImage: CGImage) {
+        self.init(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height)
+        )
+    }
+}
+
+extension Image {
+    init(uiImage image: UIImage) {
+        self.init(nsImage: image)
+    }
+}
+#endif
+import ImageIO
+
+// Keep native Mac widget taps separate from iPhone Mirroring links.
+// The Mac app registers iceometrics-mac:// in its Info.plist.
+enum IceometricsWidgetLinks {
+    static var scoreboard: URL? {
+        #if os(macOS)
+        return URL(string: "iceometrics-mac://scoreboard")
+        #else
+        return URL(string: "iceometrics://scoreboard")
+        #endif
+    }
+
+    static var predictionPie: URL? {
+        #if os(macOS)
+        return URL(string: "iceometrics-mac://predictions/pie")
+        #else
+        return URL(string: "iceometrics://predictions/pie")
+        #endif
+    }
+}
 
 let iceometricsWidgetAppGroup =
     "group.com.akappy.Iceometrics"
@@ -319,42 +364,42 @@ struct WidgetTeamLogoView: View {
 }
 
 enum WidgetTeamLogoStore {
-    static func image(
-        for team: WidgetTeam
-    ) -> UIImage? {
-        guard let root =
-            FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier:
-                    iceometricsWidgetAppGroup
-            )
-        else {
+    // WidgetKit archives the actual UIImage pixel buffer, not the 30–38pt
+    // SwiftUI frame. A 2200x2200 Rangers logo exceeds its archive limit.
+    // Downsample on READ so logos already cached on the device are repaired.
+    static func image(for team: WidgetTeam) -> UIImage? {
+        guard let root = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: iceometricsWidgetAppGroup
+        ) else {
             return nil
         }
 
-        let url =
-            root
-                .appendingPathComponent(
-                    "WidgetTeamLogos",
-                    isDirectory: true
-                )
-                .appendingPathComponent(
-                    team.abbreviation
-                        .uppercased()
-                        + ".img"
-                )
+        let url = root
+            .appendingPathComponent("WidgetTeamLogos", isDirectory: true)
+            .appendingPathComponent(team.abbreviation.uppercased() + ".img")
 
-        guard let data =
-            try? Data(
-                contentsOf: url
-            )
-        else {
+        guard let data = try? Data(contentsOf: url),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
 
-        return UIImage(data: data)
+        // 192px is sharp even at 3x Retina for the widget's 38pt logo.
+        // It is comfortably below WidgetKit's image archival limit.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 192,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+            source, 0, options as CFDictionary
+        ) else {
+            return nil
+        }
+
+        return UIImage(cgImage: thumbnail)
     }
 }
-
 
 extension WidgetGame {
     func containsTeam(

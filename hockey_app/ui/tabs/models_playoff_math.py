@@ -287,7 +287,10 @@ def team_strength_snapshot(day: dt.date, *, league: str = "NHL") -> dict[str, fl
         status = str(row.get("status_text") or "").upper()
         ot_or_so = ("OT" in status) or ("SO" in status)
         game_type = str(row.get("game_type") or "").upper()
-        is_regular = nhl_game_type({"gameType": game_type, "id": gid}) == 2
+        game_category = nhl_game_type({"gameType": game_type, "id": gid})
+        if game_category not in (2, 3):
+            continue  # Do not treat preseason exhibitions as team-strength evidence.
+        is_regular = game_category == 2
 
         away_win = away_score > home_score
         home_win = home_score > away_score
@@ -315,7 +318,12 @@ def team_strength_snapshot(day: dt.date, *, league: str = "NHL") -> dict[str, fl
         recent_point_blend = sum(v * w for v, w in zip(recent_points, recent_weights)) / weight_total
         recent_win_blend = sum(v * w for v, w in zip(recent_wins, recent_weights)) / weight_total
         recent_blend = (recent_point_blend + recent_win_blend) / 2.0
-        out[code] = max(0.0, min(1.0, (0.72 * overall_blend) + (0.28 * recent_blend)))
+        # A one- or two-game record is not sufficient to call a team a
+        # near-certain game winner. Shrink early-season estimates toward 50%.
+        blended = (0.72 * overall_blend) + (0.28 * recent_blend)
+        sample_size = min(len(pvals), len(wvals))
+        reliability = sample_size / (sample_size + 20.0)
+        out[code] = max(0.0, min(1.0, 0.5 + reliability * (blended - 0.5)))
     return out
 
 
@@ -323,8 +331,8 @@ def matchup_game_win_prob(a: str, b: str, team_strength: dict[str, float] | None
     ra = float((team_strength or {}).get(a, 0.5))
     rb = float((team_strength or {}).get(b, 0.5))
     diff = ra - rb
-    p = 1.0 / (1.0 + math.exp(-(diff / 0.12)))
-    return max(0.08, min(0.92, float(p)))
+    p = 1.0 / (1.0 + math.exp(-(diff / 0.22)))
+    return max(0.29, min(0.71, float(p)))
 
 
 def best_of_7_lengths_from_score(

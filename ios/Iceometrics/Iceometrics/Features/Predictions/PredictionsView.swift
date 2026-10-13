@@ -362,8 +362,8 @@ private struct PredictionMetricPanel: View {
     let compact: Bool
     @Binding var selectedTeamCode: String?
 
-    private var teamWidth: CGFloat { compact ? 96 : 152 }
-    private var dateWidth: CGFloat { compact ? 66 : 76 }
+    private var teamWidth: CGFloat { compact ? 94 : 128 }
+    private var dateWidth: CGFloat { compact ? 64 : 68 }
 
     private var todayIndex: Int {
         predictionTodayColumnIndex(table.columns, season: season)
@@ -477,8 +477,8 @@ private struct PredictionSpreadsheet: View {
 
     private let rowHeight: CGFloat = 42
 
-    private var teamColumnWidth: CGFloat { compact ? 96 : 152 }
-    private var dateColumnWidth: CGFloat { compact ? 66 : 76 }
+    private var teamColumnWidth: CGFloat { compact ? 94 : 128 }
+    private var dateColumnWidth: CGFloat { compact ? 64 : 68 }
 
     private var todayIndex: Int {
         predictionTodayColumnIndex(table.columns, season: season)
@@ -519,7 +519,7 @@ private struct PredictionSpreadsheet: View {
                     maxHeight: .infinity,
                     alignment: .leading
                 )
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 5)
                 .background(Color.primary.opacity(0.055))
                 .overlay(alignment: .bottom) { gridHorizontalHairline }
         } header: { column in
@@ -540,7 +540,7 @@ private struct PredictionSpreadsheet: View {
 
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 7)
+                .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .overlay {

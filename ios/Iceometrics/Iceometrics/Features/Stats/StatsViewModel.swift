@@ -21,13 +21,13 @@ final class StatsViewModel: ObservableObject {
     init(
         service: StatsDataService = StatsDataService(),
         playerService: PlayerStatsService = PlayerStatsService(),
-        liveUpdates: LiveGameUpdateCenter = .shared
+        liveUpdates: LiveGameUpdateCenter? = nil
     ) {
         self.service = service
         self.playerService = playerService
-        self.liveUpdates = liveUpdates
+        self.liveUpdates = liveUpdates ?? .shared
 
-        liveUpdates.$games
+        self.liveUpdates.$games
             .sink { [weak self] games in
                 Task { @MainActor in
                     self?.applyLiveGames(games)

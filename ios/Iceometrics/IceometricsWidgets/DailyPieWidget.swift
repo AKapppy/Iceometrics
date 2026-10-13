@@ -178,7 +178,7 @@ struct DailyPieWidgetView:
             }
         }
         .widgetURL(
-            URL(string: "iceometrics://predictions/pie")
+            IceometricsWidgetLinks.predictionPie
         )
         .containerBackground(
             Color(
@@ -473,7 +473,6 @@ struct DailyPieWidget:
         .supportedFamilies([
             .systemSmall,
             .systemLarge,
-            .systemExtraLarge,
         ])
         .contentMarginsDisabled()
     }

@@ -39,7 +39,7 @@ struct AlignedTimelineGraph: View {
     var body: some View {
         HStack(spacing: 0) {
             yAxisLabels
-                .frame(width: yLabelWidth, height: plotHeight)
+                .frame(width: leadingWidth, height: plotHeight)
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -98,7 +98,7 @@ struct AlignedTimelineGraph: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .position(
-                            x: yLabelWidth / 2,
+                            x: max(18, leadingWidth - 20),
                             y: 2 + CGFloat(fraction) * max(1, plotHeight - 4)
                         )
                 }

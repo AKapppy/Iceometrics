@@ -301,7 +301,7 @@ def _playoff_probability_rounds_export(
         live_series_probs=live_series_probs,
     )
     if r1_w or r1_e:
-        rounds.append({"title": "Round 1", "series": r1_w + r1_e})
+        rounds.append({"title": "Round 1", "series": r1_e + r1_w})
     r2_w, w2 = _pairwise_probability_export(
         w_winners,
         team_strength=team_strength,
@@ -315,7 +315,7 @@ def _playoff_probability_rounds_export(
         live_series_probs=live_series_probs,
     )
     if r2_w or r2_e:
-        rounds.append({"title": "Round 2", "series": r2_w + r2_e})
+        rounds.append({"title": "Round 2", "series": r2_e + r2_w})
     cf_w, w3 = _pairwise_probability_export(
         w2,
         team_strength=team_strength,
@@ -329,9 +329,9 @@ def _playoff_probability_rounds_export(
         live_series_probs=live_series_probs,
     )
     if cf_w or cf_e:
-        rounds.append({"title": "Conference Finals", "series": cf_w + cf_e})
+        rounds.append({"title": "Conference Finals", "series": cf_e + cf_w})
     cup, _w4 = _pairwise_probability_export(
-        w3 + e3,
+        e3 + w3,
         team_strength=team_strength,
         series_scores=series_scores,
         live_series_probs=live_series_probs,

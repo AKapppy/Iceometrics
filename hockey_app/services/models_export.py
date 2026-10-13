@@ -291,6 +291,46 @@ def _magic_tragic_snapshot(
     }
 
 
+def _remaining_opponents(day, season: str) -> dict[str, list[tuple[str, bool]]]:
+    """Remaining scheduled NHL regular-season opponents (home flag)."""
+    import xml.etree.ElementTree as ET
+    from hockey_app.data.paths import cache_dir
+    root_path = cache_dir() / "online" / "xml" / str(season) / "games.xml"
+    if not root_path.is_file():
+        return {}
+    try:
+        root = ET.parse(root_path).getroot()
+    except (ET.ParseError, OSError):
+        return {}
+    out: dict[str, list[tuple[str, bool]]] = {}
+    for node in root.findall("day"):
+        try:
+            game_day = __import__("datetime").date.fromisoformat(str(node.get("date"))[:10])
+        except ValueError:
+            continue
+        if game_day <= day:
+            continue
+        for game in node.findall("game"):
+            kind = str(game.get("game_type") or game.get("game_type_id") or game.get("game_type_code") or "").upper()
+            if kind not in {"2", "R", "REG", "REGULAR"}:
+                continue
+            away = str(game.get("away_code") or "").upper()
+            home = str(game.get("home_code") or "").upper()
+            if away == home or away not in TEAM_NAMES or home not in TEAM_NAMES:
+                continue
+            out.setdefault(away, []).append((home, False))
+            out.setdefault(home, []).append((away, True))
+    return out
+
+def _game_point_split(
+    team_rate: float, opponent_rate: float, is_home: bool
+) -> tuple[float, float, float]:
+    """League-pull outcome model: regulation loss=0, OT/SO loss=1, any win=2."""
+    win = min(.74, max(.26, .49 + .27 * (team_rate - opponent_rate)
+                        + (.035 if is_home else -.035)))
+    one = min(.18, max(.07, .12 + (.5 - win) * .06))
+    return (1.0 - win - one, one, win)
+
 def _point_probability_snapshot(
     *,
     points_df: pd.DataFrame,
@@ -307,6 +347,20 @@ def _point_probability_snapshot(
         pts,
         key=lambda code: (TEAM_NAMES.get(code, code), code),
     )
+
+    # Bayesian shrinkage: a handful of October results cannot determine
+    # a team's 84-game quality. Opponents enter as the schedule becomes known.
+    prior_games = 18.0
+    league_points_per_game = 1.10
+    strengths = {}
+    for code in teams:
+        games_played = max(0, int(gp_map.get(code, 0)))
+        current = max(0.0, float(pts.get(code, 0)))
+        strengths[code] = (current + prior_games * league_points_per_game) / (
+            games_played + prior_games
+        )
+    from hockey_app.config import SEASON
+    schedule = _remaining_opponents(day, SEASON)
 
     min_target = int(min(pts.values()))
     max_target = 0
@@ -342,28 +396,19 @@ def _point_probability_snapshot(
         )
         max_target = max(max_target, t_max)
 
-        history: list[float] = []
-        try:
-            row = points_df.loc[team]
-            history = [
-                float(value)
-                for value in row.tolist()
-                if pd.notna(value)
-            ]
-        except Exception:
-            history = []
-
-        p0, p1, p2 = _estimate_point_split_from_history(
-            history,
-            gp,
-            point_pct,
-        )
-
-        dist: dict[int, float] = {
-            int(round(cur_pts)): 1.0
-        }
-
-        for _ in range(gr):
+        # Every scheduled game is convolved as a distinct 0/1/2 outcome.
+        # If schedule cache is incomplete, use an average-league opponent for
+        # only the missing games, not a fictitious opponent identity.
+        remaining = schedule.get(team, [])[:gr]
+        matchups = remaining + [("", False)] * max(0, gr - len(remaining))
+        dist: dict[int, float] = {int(round(cur_pts)): 1.0}
+        team_rate = strengths.get(team, league_points_per_game)
+        for opponent, is_home in matchups:
+            p0, p1, p2 = _game_point_split(
+                team_rate,
+                strengths.get(opponent, league_points_per_game),
+                is_home,
+            )
             nxt: dict[int, float] = {}
             for total, probability in dist.items():
                 nxt[total] = nxt.get(total, 0.0) + probability * p0
@@ -384,14 +429,9 @@ def _point_probability_snapshot(
             if t_min <= target <= t_max
         }
 
-    values = [
-        target
-        for target in range(min_target, max_target + 1)
-        if any(
-            row_probs.get(team, {}).get(target, 0.0) > 0.0
-            for team in teams
-        )
-    ]
+    # Preserve every integer point total as a column, including outcomes
+    # with zero probability across all teams. The horizontal table scrolls.
+    values = list(range(min_target, max_target + 1))
 
     rows: list[dict[str, Any]] = []
     for team in teams:
@@ -414,7 +454,7 @@ def _point_probability_snapshot(
                 "team": team,
                 "prediction": prediction,
                 "probabilities": [
-                    round(float(probs.get(target, 0.0)), 8)
+                    round(float(probs.get(target, 0.0)), 12)
                     for target in values
                 ],
             }

@@ -181,7 +181,7 @@ struct TodaysGameTile:
                     size:
                         featured
                         ? 28
-                        : 18,
+                        : 20,
                     weight: .black,
                     design: .rounded
                 )
@@ -193,8 +193,8 @@ struct TodaysGameTile:
                     .system(
                         size:
                             featured
-                            ? 10
-                            : 8,
+                            ? 11
+                            : 10,
                         weight: .bold
                     )
                 )
@@ -339,76 +339,243 @@ struct TodaysGameTile:
     }
 }
 
-struct TodaysGamesWidgetView:
-    View {
-    let entry: TodaysGamesEntry
+// MARK: - Full-slate tile (9-16 games)
+
+private struct FullSlateGameTile: View {
+    let game: WidgetGame
+    let ultraCompact: Bool
+
+    private var logoSize: CGFloat { ultraCompact ? 17 : 23 }
+    private var innerPad: CGFloat { ultraCompact ? 4 : 6 }
 
     var body: some View {
         ZStack {
-            if entry.games.isEmpty {
-                emptyState
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 18)
-            } else {
-                smartLayout
-                    .padding(.horizontal, 8)
-                    .padding(.top, 25)
-                    .padding(.bottom, 18)
+            Color(white: 0.19)
+            tint.opacity(tintOpacity)
+            LinearGradient(
+                colors: [.white.opacity(0.05), .clear, .black.opacity(0.12)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    WidgetTeamLogoView(team: game.awayTeam, size: logoSize)
+                    Spacer(minLength: 0)
+                    WidgetTeamLogoView(team: game.homeTeam, size: logoSize)
+                }
+
+                Spacer(minLength: 1)
+
+                if game.phase == .live || game.phase == .intermission || game.phase == .final {
+                    Text("\(game.awayScore ?? 0) – \(game.homeScore ?? 0)")
+                        .font(.system(size: ultraCompact ? 15 : 19,
+                                      weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text(game.detail)
+                        .font(.system(size: ultraCompact ? 7 : 9, weight: .semibold))
+                        .opacity(0.75)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                } else {
+                    Text(game.detail)
+                        .font(.system(size: ultraCompact ? 10 : 12,
+                                      weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+                }
+
+                Spacer(minLength: 1)
+
+                HStack(spacing: 0) {
+                    Text(percent(game.awayProbability))
+                    Spacer(minLength: 1)
+                    Text(percent(game.homeProbability))
+                }
+                .font(.system(size: ultraCompact ? 8 : 9,
+                              weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .opacity(0.82)
             }
-
-            Text("TODAY'S GAMES")
-                .font(
-                    .system(
-                        size: 13,
-                        weight: .black,
-                        design: .rounded
-                    )
-                )
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: .top
-                )
-                .padding(.top, 3)
-                .allowsHitTesting(false)
-
-            Text("ICEOMETRICS")
-                .font(
-                    .system(
-                        size: 8,
-                        weight: .bold
-                    )
-                )
-                .tracking(0.9)
-                .opacity(0.40)
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: .bottom
-                )
-                .padding(.bottom, 3)
-                .allowsHitTesting(false)
+            .padding(.horizontal, innerPad)
+            .padding(.vertical, ultraCompact ? 4 : 6)
         }
         .foregroundStyle(.white)
-        .widgetURL(
-            URL(string: "iceometrics://scoreboard")
-        )
+        .clipShape(RoundedRectangle(cornerRadius: ultraCompact ? 9 : 12,
+                                    style: .continuous))
+    }
+
+    private func percent(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return "\(Int((value * 100).rounded()))%"
+    }
+
+    private var tint: Color {
+        switch game.phase {
+        case .live:
+            let away = game.awayScore ?? 0
+            let home = game.homeScore ?? 0
+            if away == home { return .white }
+            return Color(widgetHex: away > home
+                ? game.awayTeam.accentHex : game.homeTeam.accentHex)
+        case .intermission, .starting:
+            return .white
+        case .final, .scheduled, .postponed, .unknown:
+            return .clear
+        }
+    }
+
+    private var tintOpacity: Double {
+        switch game.phase {
+        case .live:
+            return game.awayScore == game.homeScore ? 0.15 : 0.47
+        case .intermission, .starting:
+            return 0.13
+        case .final, .scheduled, .postponed, .unknown:
+            return 0
+        }
+    }
+}
+
+struct TodaysGamesWidgetView:
+    View {
+    let entry: TodaysGamesEntry
+    @Environment(\.widgetFamily) private var widgetFamily
+
+    var body: some View {
+        // ICEOMETRICS_FULL_SLATE_16_V1
+        GeometryReader { geometry in
+            let displayGames = Array(entry.games.prefix(16))
+            let contentHeight = max(CGFloat(0), geometry.size.height - 36)
+
+            VStack(spacing: 0) {
+                Text("TODAY'S GAMES")
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 22)
+                    .accessibilityAddTraits(.isHeader)
+
+                Group {
+                    if displayGames.isEmpty {
+                        emptyState
+                            .padding(.horizontal, 8)
+                    } else if widgetFamily == .systemExtraLarge {
+                        // Only advertised for macOS, so the iPhone large
+                        // widget retains its current visual layout.
+                        extraLargeLayout(displayGames, height: contentHeight)
+                    } else if displayGames.count >= 9 {
+                        // 9 = 3x3; 10-12 = 4x3; 13-16 = 4x4.
+                        // Every tile is measured against the available height.
+                        fullSlateLayout(displayGames, height: contentHeight)
+                    } else {
+                        // Preserve the existing 1-8 game layouts exactly.
+                        smartLayout(aspectRatio: geometry.size.width / max(geometry.size.height, 1))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: contentHeight)
+
+                Text("ICEOMETRICS")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.9)
+                    .opacity(0.45)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 14)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .foregroundStyle(.white)
+        .widgetURL(IceometricsWidgetLinks.scoreboard)
         .containerBackground(
-            Color(
-                red: 0.045,
-                green: 0.050,
-                blue: 0.060
-            ),
+            Color(red: 0.045, green: 0.050, blue: 0.060),
             for: .widget
         )
     }
 
+    // ICEOMETRICS_TODAYS_GAMES_MAC_XL_V1
+    // The Mac-only family is large enough to spread all 16 NHL games across
+    // four columns without compressing the header or footer.
+    private func extraLargeLayout(
+        _ games: [WidgetGame],
+        height: CGFloat
+    ) -> some View {
+        let columns = games.count <= 2 ? games.count : (games.count <= 6 ? 3 : 4)
+        let rows = (games.count + columns - 1) / columns
+        let gap: CGFloat = 7
+        let inset: CGFloat = 6
+        let tileHeight = max(
+            CGFloat(1),
+            (height - inset * 2 - CGFloat(rows - 1) * gap) / CGFloat(rows)
+        )
+
+        return LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 0), spacing: gap),
+                count: columns
+            ),
+            alignment: .center,
+            spacing: gap
+        ) {
+            ForEach(games) { game in
+                Group {
+                    if tileHeight >= 105 {
+                        TodaysGameTile(game: game, featured: tileHeight >= 155)
+                    } else {
+                        FullSlateGameTile(game: game, ultraCompact: tileHeight < 74)
+                    }
+                }
+                .frame(height: tileHeight)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, inset)
+        .frame(height: height, alignment: .top)
+    }
+
+    private func fullSlateLayout(
+        _ games: [WidgetGame],
+        height: CGFloat
+    ) -> some View {
+        let columnCount = games.count <= 9 ? 3 : 4
+        let rowCount = (games.count + columnCount - 1) / columnCount
+        let gap: CGFloat = games.count >= 13 ? 3 : 5
+        let verticalInset: CGFloat = 3
+        let tileHeight = max(
+            CGFloat(1),
+            (height - verticalInset * 2 - CGFloat(rowCount - 1) * gap)
+                / CGFloat(rowCount)
+        )
+
+        return LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 0), spacing: gap),
+                count: columnCount
+            ),
+            alignment: .center,
+            spacing: gap
+        ) {
+            ForEach(games) { game in
+                FullSlateGameTile(
+                    game: game,
+                    ultraCompact: games.count >= 13
+                )
+                .frame(height: tileHeight)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, verticalInset)
+        .frame(height: height, alignment: .top)
+    }
+
     @ViewBuilder
-    private var smartLayout:
-        some View {
+    private func smartLayout(aspectRatio: CGFloat) -> some View {
         let games =
             Array(
-                entry.games.prefix(9)
+                entry.games.prefix(16)
             )
 
         switch games.count {
@@ -430,39 +597,44 @@ struct TodaysGamesWidgetView:
             }
 
         case 3:
-            if let favorite =
-                favoriteGame(
-                    in: games
-                ) {
-                HStack(spacing: 7) {
-                    TodaysGameTile(
-                        game:
-                            favorite,
-                        featured:
-                            true
-                    )
-
-                    VStack(
-                        spacing: 7
+            // ICEOMETRICS_THREE_GAMES_ASPECT_V1
+            if aspectRatio <= 1.32 && favoriteGame(in: games) == nil {
+                threeGameSquareLayout(games)
+            } else {
+                if let favorite =
+                    favoriteGame(
+                        in: games
                     ) {
-                        ForEach(
-                            games.filter {
-                                $0.id
-                                    != favorite.id
+                    HStack(spacing: 7) {
+                        TodaysGameTile(
+                            game:
+                                favorite,
+                            featured:
+                                true
+                        )
+
+                        VStack(
+                            spacing: 7
+                        ) {
+                            ForEach(
+                                games.filter {
+                                    $0.id
+                                        != favorite.id
+                                }
+                            ) { game in
+                                TodaysGameTile(
+                                    game:
+                                        game
+                                )
                             }
-                        ) { game in
-                            TodaysGameTile(
-                                game:
-                                    game
-                            )
                         }
                     }
+                } else {
+                    compactGrid(
+                        games,
+                        columns: 3
+                    )
                 }
-            } else {
-                compactGrid(
-                    games,
-                    columns: 3
-                )
             }
 
         case 4:
@@ -570,6 +742,29 @@ struct TodaysGamesWidgetView:
         }
     }
 
+    // 3 non-favorite games on square-like canvases: three equal tiles,
+    // one empty quadrant. On wide canvases the existing row layout remains.
+    // This does not depend on iOS vs macOS or any hardcoded pixel dimensions.
+    private func threeGameSquareLayout(_ games: [WidgetGame]) -> some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 7) {
+                TodaysGameTile(game: games[0])
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TodaysGameTile(game: games[1])
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            HStack(spacing: 7) {
+                TodaysGameTile(game: games[2])
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     private func twoByTwo(
         _ games: [WidgetGame]
     ) -> some View {
@@ -629,6 +824,14 @@ struct TodaysGamesWidgetView:
 
 struct TodaysGamesWidget:
     Widget {
+    private var supportedSizes: [WidgetFamily] {
+        #if os(macOS)
+        return [.systemLarge, .systemExtraLarge]
+        #else
+        return [.systemLarge]
+        #endif
+    }
+
     let kind =
         "TodaysGamesWidget"
 
@@ -649,9 +852,7 @@ struct TodaysGamesWidget:
         .description(
             "Today's real NHL scores and MoneyPuck probabilities."
         )
-        .supportedFamilies([
-            .systemLarge,
-        ])
+        .supportedFamilies(supportedSizes)
         .contentMarginsDisabled()
     }
 }
