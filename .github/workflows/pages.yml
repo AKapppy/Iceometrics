@@ -43,6 +43,20 @@ jobs:
           restore-keys: |
             moneypuck-simulations-${{ runner.os }}-
 
+      - name: Restore locally recovered MoneyPuck simulation dates
+        shell: bash
+        run: |
+          # These verified snapshots fill gaps that MoneyPuck's public
+          # archive index no longer exposes. Do this after actions/cache/restore.
+          shopt -s nullglob
+          for csv in hockey_app/resources/recovered_simulations/*/simulations_*.csv; do
+            season="$(basename "$(dirname "$csv")")"
+            destination="cache/online/moneypuck/$season/simulations"
+            mkdir -p "$destination"
+            cp "$csv" "$destination/$(basename "$csv")"
+            echo "Recovered historical simulation: $season/$(basename "$csv")"
+          done
+
       - name: Compile package
         run: python -m compileall -q hockey_app
 
