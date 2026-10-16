@@ -967,10 +967,46 @@ private struct PlayerStatsPanel: View {
     let snapshot: StatsSnapshot
     @ObservedObject var viewModel: StatsViewModel
     @State private var phase: StatsPhase = .regular
+    @State private var teamScope = "LEAGUE"
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var phases: [StatsPhase] {
         snapshot.availablePhases.isEmpty ? [snapshot.defaultPhase] : snapshot.availablePhases
+    }
+
+    private let divisions: [(name: String, codes: String)] = [
+        ("Atlantic", "BOS BUF DET FLA MTL OTT TBL TOR"),
+        ("Metropolitan", "CAR CBJ NJD NYI NYR PHI PIT WSH"),
+        ("Central", "CHI COL DAL MIN NSH STL UTA WPG"),
+        ("Pacific", "ANA CGY EDM LAK SJS SEA VAN VGK")
+    ]
+
+    private func scopedPlayers(_ players: [PlayerStatLine]) -> [PlayerStatLine] {
+        if teamScope == "LEAGUE" { return players }
+        if teamScope.hasPrefix("DIV:") {
+            let name = String(teamScope.dropFirst(4))
+            guard let division = divisions.first(where: { $0.name == name }) else { return [] }
+            let codes = Set(division.codes.split(separator: " ").map(String.init))
+            return players.filter { codes.contains($0.teamCode.uppercased()) }
+        }
+        return players.filter { $0.teamCode.uppercased() == teamScope }
+    }
+
+    private var scopePicker: some View {
+        Picker("Filter players", selection: $teamScope) {
+            Text("Whole League").tag("LEAGUE")
+            Section("Division") {
+                ForEach(divisions.map { $0.name }, id: \.self) { divisionName in
+                    Text(divisionName).tag("DIV:" + divisionName)
+                }
+            }
+            Section("Team") {
+                ForEach(snapshot.teams.sorted(by: { $0.name < $1.name })) { team in
+                    Text(team.name).tag(team.code.uppercased())
+                }
+            }
+        }
+        .frame(maxWidth: 230)
     }
 
     var body: some View {
@@ -980,6 +1016,7 @@ private struct PlayerStatsPanel: View {
                 selection: $phase,
                 phases: phases
             )
+            scopePicker
 
             if viewModel.loadingPlayerPhases.contains(phase) {
                 ProgressView("Loading player leaders…")
@@ -991,14 +1028,14 @@ private struct PlayerStatsPanel: View {
                         VStack(spacing: 14) {
                             PlayerCategoryPanel(
                                 title: "Skaters",
-                                players: data.skaters,
+                                players: scopedPlayers(data.skaters),
                                 options: ["All", "Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                                 allStats: ["Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                                 snapshot: snapshot
                             )
                             PlayerCategoryPanel(
                                 title: "Goalies",
-                                players: data.goalies,
+                                players: scopedPlayers(data.goalies),
                                 options: ["All", "Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                                 allStats: ["Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                                 snapshot: snapshot
@@ -1010,14 +1047,14 @@ private struct PlayerStatsPanel: View {
                         HStack(alignment: .top, spacing: 14) {
                         PlayerCategoryPanel(
                             title: "Skaters",
-                            players: data.skaters,
+                            players: scopedPlayers(data.skaters),
                             options: ["All", "Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                             allStats: ["Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"],
                             snapshot: snapshot
                         )
                         PlayerCategoryPanel(
                             title: "Goalies",
-                            players: data.goalies,
+                            players: scopedPlayers(data.goalies),
                             options: ["All", "Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                             allStats: ["Wins", "Losses", "OTL", "Save %", "Shutouts", "Saves", "Games Started", "Saves / GS", "GAA"],
                             snapshot: snapshot
@@ -1088,6 +1125,11 @@ private struct PlayerCategoryPanel: View {
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 10) {
+                                if topPlayers(for: stat, limit: 5).isEmpty {
+                                    Text("Not reported by NHL")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 ForEach(topPlayers(for: stat, limit: 5)) { player in
                                     if player.value(stat) == 0 {
                                         IceometricsZeroPlayerCard()
@@ -1104,6 +1146,12 @@ private struct PlayerCategoryPanel: View {
                 }
             } else {
                 LazyVStack(spacing: 0) {
+                    if topPlayers(for: selectedStat, limit: 25).isEmpty {
+                        Text("No reported NHL leaders for this filter.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 18)
+                    }
                     ForEach(topPlayers(for: selectedStat, limit: 25)) { player in
                         if player.value(selectedStat) == 0 {
                             IceometricsZeroPlayerRow()
@@ -1123,12 +1171,15 @@ private struct PlayerCategoryPanel: View {
 
     private func topPlayers(for stat: String, limit: Int) -> [PlayerStatLine] {
         Array(
-            players.sorted {
-                if $0.value(stat) == $1.value(stat) {
-                    return $0.name < $1.name
+            players
+                .filter { $0.values[stat]?.isFinite == true }
+                .sorted {
+                    if $0.value(stat) == $1.value(stat) {
+                        return $0.name < $1.name
+                    }
+                    return $0.value(stat) > $1.value(stat)
                 }
-                return $0.value(stat) > $1.value(stat)
-            }.prefix(limit)
+                .prefix(limit)
         )
     }
 }
@@ -1445,7 +1496,7 @@ private struct IceometricsHistoryToolbar: View {
     let phases: [StatsPhase]
     let allowNegative: Bool
     @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
-    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.points.axis.v2") private var pointsAxis = "date"
     @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
 
     private var axis: Binding<String> {
@@ -1518,7 +1569,7 @@ private struct HistoryStatsPanel: View {
 
     // Persist independently for Points and Goal Differential, so returning to
     // a graph restores the viewer's preferred horizontal axis.
-    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.points.axis.v2") private var pointsAxis = "date"
     @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
     @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
 

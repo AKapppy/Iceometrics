@@ -370,6 +370,14 @@ enum TeamPerformancePalette {
         "WSH": (good: "#041E42", bad: "#C8102E"),
     ]
 
+    static func predictionBarColors(teamCode: String, fallbackHex: String) -> [Color] {
+        let pair = nhl[teamCode.uppercased()]
+        return [
+            Color(hex: pair?.good ?? fallbackHex, fallback: .accentColor),
+            Color(hex: pair?.bad ?? fallbackHex, fallback: .accentColor)
+        ]
+    }
+
     private struct RGB {
         var red: Double
         var green: Double

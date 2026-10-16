@@ -233,8 +233,8 @@ struct ModelsView: View {
 }
 
 private enum ModelsSection: String, CaseIterable, Identifiable {
-    case playoffPicture
     case standings
+    case playoffPicture
     case magicTragic
     case pointProbabilities
     case playoffWinProbabilities
@@ -244,7 +244,7 @@ private enum ModelsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .playoffPicture:
-            "Playoff Picture"
+            "Bracket"
         case .standings:
             "Standings"
         case .magicTragic:
@@ -258,7 +258,7 @@ private enum ModelsSection: String, CaseIterable, Identifiable {
 
     var compactTitle: String {
         switch self {
-        case .playoffPicture: "Playoffs"
+        case .playoffPicture: "Bracket"
         case .standings: "Standings"
         case .magicTragic: "Magic"
         case .pointProbabilities: "Points"
@@ -532,13 +532,37 @@ private struct IceometricsActualStandingsPanel: View {
     private var conferences: [String] { ["Eastern", "Western"] }
     private var divisions: [String] { ["Atlantic", "Metropolitan", "Central", "Pacific"] }
 
+    private var wildcardStandings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Wild Card • Full Conference Standings")
+                .font(.headline)
+            ForEach(conferences, id: \.self) { conference in
+                IceometricsStandingsTable(
+                    title: conference + " 1–16",
+                    rows: snapshot.rows
+                        .filter { $0.conference == conference }
+                        .sorted { $0.conferenceRank < $1.conferenceRank }
+                )
+            }
+        }
+    }
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Actual NHL standings • \(snapshot.date)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
+                        wildcardStandings
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
+                        wildcardStandings
+                    }
+                }
                 Text("Conferences").font(.headline)
                 LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
                     ForEach(conferences, id: \.self) { conference in
@@ -559,18 +583,6 @@ private struct IceometricsActualStandingsPanel: View {
                         )
                     }
                 }
-                Text("Wild Card • Division top three qualify directly")
-                    .font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(conferences, id: \.self) { conference in
-                        IceometricsStandingsTable(
-                            title: conference + " wild-card race",
-                            rows: snapshot.rows.filter {
-                                $0.conference == conference && $0.divisionRank > 3
-                            }.sorted { $0.wildcardRank < $1.wildcardRank }
-                        )
-                    }
-                }
             }
             .padding(.bottom, 16)
         }
@@ -585,7 +597,7 @@ private struct IceometricsStandingsTable: View {
             Text(title).font(.subheadline.bold()).padding(9)
             HStack(spacing: 4) {
                 Text("#").frame(width: 20, alignment: .trailing)
-                Text("Team").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Team").frame(width: 58, alignment: .leading)
                 Text("GP").frame(width: 25, alignment: .trailing)
                 Text("W").frame(width: 23, alignment: .trailing)
                 Text("L").frame(width: 23, alignment: .trailing)
@@ -599,7 +611,7 @@ private struct IceometricsStandingsTable: View {
                 let team = rows[i]
                 HStack(spacing: 4) {
                     Text(String(i + 1)).frame(width: 20, alignment: .trailing)
-                    Text(team.code).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(team.code).frame(width: 58, alignment: .leading)
                     Text(String(team.gp)).frame(width: 25, alignment: .trailing)
                     Text(String(team.wins)).frame(width: 23, alignment: .trailing)
                     Text(String(team.losses)).frame(width: 23, alignment: .trailing)

@@ -6,6 +6,15 @@ import Combine
 struct IceoTimelineScrollEvent {
     let x: CGFloat
     let sender: UUID
+    let centeredColumn: Int?
+}
+
+// A single scroll-geometry sample keeps its horizontal, vertical and
+// centered-column measurements consistent for chart/table synchronization.
+struct IceoScrollSample: Equatable {
+    let x: CGFloat
+    let y: CGFloat
+    let centeredColumn: Int
 }
 
 @MainActor
@@ -13,11 +22,13 @@ final class IceoTimelineScrollLink: ObservableObject {
     let events = PassthroughSubject<IceoTimelineScrollEvent, Never>()
     private var lastX: CGFloat = 0
 
-    func report(_ x: CGFloat, sender: UUID) {
+    func report(_ x: CGFloat, sender: UUID, centeredColumn: Int? = nil) {
         let next = max(0, x)
         guard abs(next - lastX) > 0.75 else { return }
         lastX = next
-        events.send(IceoTimelineScrollEvent(x: next, sender: sender))
+        events.send(IceoTimelineScrollEvent(
+            x: next, sender: sender, centeredColumn: centeredColumn
+        ))
     }
 }
 
@@ -184,10 +195,17 @@ struct AlignedTimelineGraph: View {
                     }
                 }
                 .scrollPosition($iceoLinkedPosition)
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    max(0, geometry.contentOffset.x)
-                } action: { _, x in
-                    linkedHorizontalScroll?.report(x, sender: iceoScrollSender)
+                .onScrollGeometryChange(for: IceoScrollSample.self) { geometry in
+                    let x = max(0, geometry.contentOffset.x)
+                    let middle = x + geometry.containerSize.width * 0.5
+                    let column = max(0, Int(middle / max(1, columnWidth)))
+                    return IceoScrollSample(x: x, y: 0, centeredColumn: column)
+                } action: { _, sample in
+                    linkedHorizontalScroll?.report(
+                        sample.x,
+                        sender: iceoScrollSender,
+                        centeredColumn: sample.centeredColumn
+                    )
                 }
                 .onReceive(iceoExternalScrolls) { event in
                     guard event.sender != iceoScrollSender else { return }

@@ -367,12 +367,48 @@ private struct PredictionMetricPanel: View {
     @Binding var selectedTeamCode: String?
     @AppStorage("iceometrics.predictions.lastFocusedTeamCode") private var lastFocusedTeamCode = ""
     @State private var iceoScrollLink = IceoTimelineScrollLink()
+    @State private var focusedColumnIndex: Int?
+    @State private var jumpColumnIndex: Int?
 
-    private var teamWidth: CGFloat { compact ? 88 : 120 }
+    private var teamWidth: CGFloat { compact ? 82 : 105 }
     private var dateWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
         predictionTodayColumnIndex(table.columns, season: season)
+    }
+
+    private var displayColumnIndex: Int {
+        min(max(0, focusedColumnIndex ?? todayIndex), max(0, table.columns.count - 1))
+    }
+
+    private var dateScrubber: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.secondary)
+            Slider(
+                value: Binding(
+                    get: { Double(displayColumnIndex) },
+                    set: {
+                        let selected = Int($0.rounded())
+                        focusedColumnIndex = selected
+                        jumpColumnIndex = selected
+                    }
+                ),
+                in: 0...Double(max(1, table.columns.count - 1)),
+                step: 1
+            )
+            .accessibilityLabel("Prediction date")
+            Text(displayPredictionDate(table.columns[displayColumnIndex], season: season))
+                .font(.caption.monospacedDigit())
+                .frame(minWidth: 63, alignment: .trailing)
+            Button("Today") {
+                focusedColumnIndex = todayIndex
+                jumpColumnIndex = todayIndex
+            }
+                .font(.caption)
+                .disabled(focusedColumnIndex == nil || displayColumnIndex == todayIndex)
+        }
+        .padding(.horizontal, 4)
     }
 
     private var yDomain: (Double, Double) {
@@ -388,6 +424,26 @@ private struct PredictionMetricPanel: View {
         ]
         let ceiling = ceilings.first(where: { $0 > highest }) ?? 100
         return (0, ceiling)
+    }
+
+    private var projectedFieldCount: Int {
+        let metric = title.lowercased()
+        if metric.contains("stanley cup") { return 2 }
+        if metric.contains("conference final") { return 4 }
+        if metric.contains("round 2") || metric.contains("second round") { return 8 }
+        if metric.contains("round 1") || metric.contains("first round") { return 12 }
+        if metric.contains("playoff") { return 16 }
+        return 0
+    }
+
+    private var projectionLeaders: [PredictionTeam] {
+        guard projectedFieldCount > 0 else { return [] }
+        let index = displayColumnIndex
+        return Array(teams.sorted {
+            let left = table.value(teamCode: $0.code, columnIndex: index) ?? -1
+            let right = table.value(teamCode: $1.code, columnIndex: index) ?? -1
+            return left == right ? $0.code < $1.code : left > right
+        }.prefix(projectedFieldCount))
     }
 
     private var graphSeries: [TimelineGraphSeries] {
@@ -421,9 +477,25 @@ private struct PredictionMetricPanel: View {
                 season: season,
                 compact: compact,
                 selectedTeamCode: $selectedTeamCode,
-                linkedHorizontalScroll: iceoScrollLink
+                linkedHorizontalScroll: iceoScrollLink,
+                focusColumnIndex: displayColumnIndex,
+                jumpColumnIndex: jumpColumnIndex ?? todayIndex
             )
             .frame(maxHeight: .infinity)
+            .onReceive(iceoScrollLink.events) { event in
+                guard let centered = event.centeredColumn,
+                      !table.columns.isEmpty else { return }
+                let visible = min(max(0, centered), table.columns.count - 1)
+                if focusedColumnIndex != visible {
+                    // Scrolling changes the viewed date but never changes
+                    // the programmatic jump target (avoids snapping back).
+                    focusedColumnIndex = visible
+                }
+            }
+            .onChange(of: table.columns) { _, _ in
+                focusedColumnIndex = nil
+                jumpColumnIndex = nil
+            }
         }
     }
 
@@ -461,6 +533,8 @@ private struct PredictionMetricPanel: View {
                 }
 }
 
+            if table.columns.count > 1 { dateScrubber }
+
             AlignedTimelineGraph(
                 labels: table.columns.map {
                     displayPredictionDate($0, season: season)
@@ -470,7 +544,7 @@ private struct PredictionMetricPanel: View {
                 columnWidth: dateWidth,
                 yMin: yDomain.0,
                 yMax: yDomain.1,
-                initialColumnIndex: todayIndex,
+                initialColumnIndex: jumpColumnIndex ?? todayIndex,
                 height: 226,
                 showXLabels: false,
                 adaptiveYScale: false,
@@ -480,6 +554,30 @@ private struct PredictionMetricPanel: View {
                 linkedHorizontalScroll: iceoScrollLink
             ) { value in
                 "\(Int(value.rounded()))%"
+            }
+            if !projectionLeaders.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Probability leaders · Not confirmed matchups")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(projectionLeaders) { team in
+                                Button {
+                                    selectedTeamCode = team.code
+                                } label: {
+                                    VStack(spacing: 3) {
+                                        PredictionTeamLogo(team: team)
+                                        Text(team.code).font(.caption2.weight(.semibold))
+                                    }
+                                    .frame(minWidth: 56)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
             }
         }
         .padding(.vertical, 6)
@@ -505,10 +603,12 @@ private struct PredictionSpreadsheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
     let linkedHorizontalScroll: IceoTimelineScrollLink
+    let focusColumnIndex: Int
+    let jumpColumnIndex: Int
 
     private let rowHeight: CGFloat = 36
 
-    private var teamColumnWidth: CGFloat { compact ? 88 : 120 }
+    private var teamColumnWidth: CGFloat { compact ? 82 : 105 }
     private var dateColumnWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
@@ -547,25 +647,18 @@ private struct PredictionSpreadsheet: View {
             .frame(width: 0.5)
     }
 
-    // The table and the right pane scroll together vertically. Bars are not a
-    // separate scroll view: their rows always match the team rows.
-    @State private var tableVerticalOffset: CGFloat = 0
+    // Bidirectional scroll coordination: users can scroll either the bars
+    // or the table and the matching rows stay aligned.
+    @State private var verticalScrollLink = IceoVerticalScrollLink()
+    @State private var barScrollPosition = ScrollPosition()
+    @State private var barScrollSender = UUID()
     private let latestPaneWidth: CGFloat = 235
-
-    private var latestAvailableColumn: Int {
-        guard !table.columns.isEmpty else { return 0 }
-        return table.columns.indices.reversed().first { index in
-            teams.contains { team in
-                table.value(teamCode: team.code, columnIndex: index) != nil
-            }
-        } ?? todayIndex
-    }
 
     // ICEOMETRICS_DOC_REMAINING_20261015_V1_PREDICTIONS
     private var latestBarPanel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                Text("LATEST · \(table.columns.isEmpty ? "—" : displayPredictionDate(table.columns[latestAvailableColumn], season: season))")
+                Text("SELECTED · \(table.columns.isEmpty ? "—" : displayPredictionDate(table.columns[focusColumnIndex], season: season))")
                     .font(.caption2.bold())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -579,26 +672,23 @@ private struct PredictionSpreadsheet: View {
             .background(Color.primary.opacity(0.055))
             .overlay(alignment: .bottom) { gridHorizontalHairline }
 
-            GeometryReader { _ in
-                VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
                     ForEach(teams) { team in
                         let value = table.value(
                             teamCode: team.code,
-                            columnIndex: latestAvailableColumn
+                            columnIndex: focusColumnIndex
                         )
                         HStack(spacing: 7) {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
-                                    Capsule()
+                                    RoundedRectangle(cornerRadius: 2)
                                         .fill(Color.primary.opacity(0.085))
                                     if let value {
-                                        Capsule()
+                                        RoundedRectangle(cornerRadius: 2)
                                             .fill(
                                                 LinearGradient(
-                                                    colors: [
-                                                        Color(hex: team.colorHex, fallback: .accentColor).opacity(0.35),
-                                                        Color(hex: team.colorHex, fallback: .accentColor)
-                                                    ],
+                                                    colors: TeamPerformancePalette.predictionBarColors(teamCode: team.code, fallbackHex: team.colorHex),
                                                     startPoint: .leading,
                                                     endPoint: .trailing
                                                 )
@@ -621,9 +711,17 @@ private struct PredictionSpreadsheet: View {
                         .overlay(alignment: .bottom) { gridHorizontalHairline }
                     }
                 }
-                .offset(y: -tableVerticalOffset)
             }
-            .clipped()
+            .scrollPosition($barScrollPosition)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                max(0, geometry.contentOffset.y)
+            } action: { _, y in
+                verticalScrollLink.report(y, sender: barScrollSender)
+            }
+            .onReceive(verticalScrollLink.events) { event in
+                guard event.sender != barScrollSender else { return }
+                barScrollPosition.scrollTo(y: event.y)
+            }
         }
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1)
@@ -649,13 +747,9 @@ private struct PredictionSpreadsheet: View {
                 rowHeaderWidth: teamColumnWidth,
                 rowHeight: rowHeight,
                 headerHeight: rowHeight,
-                initialColumnID: todayIndex,
+                initialColumnID: jumpColumnIndex,
                 linkedHorizontalScroll: linkedHorizontalScroll,
-                onVerticalScroll: { next in
-                    if abs(next - tableVerticalOffset) > 0.75 {
-                        tableVerticalOffset = next
-                    }
-                }
+                linkedVerticalScroll: verticalScrollLink
             ) {
                 Text("Team")
                     .font(.caption.weight(.bold))
@@ -671,7 +765,7 @@ private struct PredictionSpreadsheet: View {
             } header: { column in
                 dateHeader(
                     table.columns[column.id],
-                    isToday: column.id == todayIndex
+                    isToday: column.id == focusColumnIndex
                 )
             } rowHeader: { team in
                 Button {
@@ -700,7 +794,7 @@ private struct PredictionSpreadsheet: View {
             } cell: { team, column in
                 probabilityCell(
                     table.value(teamCode: team.code, columnIndex: column.id),
-                    isToday: column.id == todayIndex,
+                    isToday: column.id == focusColumnIndex,
                     teamCode: team.code,
                     bounds: probabilityBounds[column.id]
                 )
