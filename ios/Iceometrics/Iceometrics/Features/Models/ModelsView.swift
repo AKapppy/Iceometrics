@@ -597,7 +597,7 @@ private struct IceometricsStandingsTable: View {
             Text(title).font(.subheadline.bold()).padding(9)
             HStack(spacing: 4) {
                 Text("#").frame(width: 20, alignment: .trailing)
-                Text("Team").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Team").frame(width: 58, alignment: .leading)
                 Text("GP").frame(width: 25, alignment: .trailing)
                 Text("W").frame(width: 23, alignment: .trailing)
                 Text("L").frame(width: 23, alignment: .trailing)
@@ -611,7 +611,7 @@ private struct IceometricsStandingsTable: View {
                 let team = rows[i]
                 HStack(spacing: 4) {
                     Text(String(i + 1)).frame(width: 20, alignment: .trailing)
-                    Text(team.code).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(team.code).frame(width: 58, alignment: .leading)
                     Text(String(team.gp)).frame(width: 25, alignment: .trailing)
                     Text(String(team.wins)).frame(width: 23, alignment: .trailing)
                     Text(String(team.losses)).frame(width: 23, alignment: .trailing)
