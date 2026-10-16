@@ -368,7 +368,7 @@ private struct PredictionMetricPanel: View {
     @AppStorage("iceometrics.predictions.lastFocusedTeamCode") private var lastFocusedTeamCode = ""
     @State private var iceoScrollLink = IceoTimelineScrollLink()
 
-    private var teamWidth: CGFloat { compact ? 88 : 120 }
+    private var teamWidth: CGFloat { compact ? 82 : 105 }
     private var dateWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
@@ -508,7 +508,7 @@ private struct PredictionSpreadsheet: View {
 
     private let rowHeight: CGFloat = 36
 
-    private var teamColumnWidth: CGFloat { compact ? 88 : 120 }
+    private var teamColumnWidth: CGFloat { compact ? 82 : 105 }
     private var dateColumnWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
@@ -589,16 +589,13 @@ private struct PredictionSpreadsheet: View {
                         HStack(spacing: 7) {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
-                                    Capsule()
+                                    RoundedRectangle(cornerRadius: 2)
                                         .fill(Color.primary.opacity(0.085))
                                     if let value {
-                                        Capsule()
+                                        RoundedRectangle(cornerRadius: 2)
                                             .fill(
                                                 LinearGradient(
-                                                    colors: [
-                                                        Color(hex: team.colorHex, fallback: .accentColor).opacity(0.35),
-                                                        Color(hex: team.colorHex, fallback: .accentColor)
-                                                    ],
+                                                    colors: TeamPerformancePalette.predictionBarColors(teamCode: team.code, fallbackHex: team.colorHex),
                                                     startPoint: .leading,
                                                     endPoint: .trailing
                                                 )
