@@ -431,6 +431,7 @@ private struct PredictionMetricPanel: View {
         if metric.contains("stanley cup") { return 2 }
         if metric.contains("conference final") { return 4 }
         if metric.contains("round 2") || metric.contains("second round") { return 8 }
+        if metric.contains("round 1") || metric.contains("first round") { return 12 }
         if metric.contains("playoff") { return 16 }
         return 0
     }
