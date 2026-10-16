@@ -91,14 +91,10 @@ struct ScoreboardView: View {
         // Only the selected day's games can affect section ordering here.
         // Avoid materializing the full-season merged game array on every
         // scoreboard body update (especially during live polling).
-        for game in gamesForSelectedDate {
-            if game.awayTeam.id == favoriteTeamID
-                || game.homeTeam.id == favoriteTeamID
-            {
-                return ScoreboardCompetitionCatalog.id(
-                    for: game
-                )
-            }
+        for game in gamesForSelectedDate where isFavoriteGame(
+            game, favoriteTeamID: favoriteTeamID
+        ) {
+            return ScoreboardCompetitionCatalog.id(for: game)
         }
 
         return nil
@@ -496,8 +492,11 @@ struct ScoreboardView: View {
         _ game: HockeyGame,
         favoriteTeamID: String
     ) -> Bool {
-        game.awayTeam.id == favoriteTeamID
+        let selected = favoriteTeamID.uppercased()
+        return game.awayTeam.id == favoriteTeamID
             || game.homeTeam.id == favoriteTeamID
+            || game.awayTeam.abbreviation.uppercased() == selected
+            || game.homeTeam.abbreviation.uppercased() == selected
     }
 
     private func displayedPrediction(
