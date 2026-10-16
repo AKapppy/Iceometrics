@@ -390,6 +390,27 @@ private struct PredictionMetricPanel: View {
         return (0, ceiling)
     }
 
+    private var projectedFieldCount: Int {
+        let metric = title.lowercased()
+        if metric.contains("stanley cup") { return 2 }
+        if metric.contains("conference final") { return 4 }
+        if metric.contains("round 2") || metric.contains("second round") { return 8 }
+        if metric.contains("playoff") { return 16 }
+        return 0
+    }
+
+    private var projectionLeaders: [PredictionTeam] {
+        guard projectedFieldCount > 0 else { return [] }
+        let index = table.columns.indices.reversed().first { column in
+            teams.contains { table.value(teamCode: $0.code, columnIndex: column) != nil }
+        } ?? todayIndex
+        return Array(teams.sorted {
+            let left = table.value(teamCode: $0.code, columnIndex: index) ?? -1
+            let right = table.value(teamCode: $1.code, columnIndex: index) ?? -1
+            return left == right ? $0.code < $1.code : left > right
+        }.prefix(projectedFieldCount))
+    }
+
     private var graphSeries: [TimelineGraphSeries] {
         teams.map { team in
             TimelineGraphSeries(
@@ -480,6 +501,30 @@ private struct PredictionMetricPanel: View {
                 linkedHorizontalScroll: iceoScrollLink
             ) { value in
                 "\(Int(value.rounded()))%"
+            }
+            if !projectionLeaders.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Probability leaders · Not confirmed matchups")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(projectionLeaders) { team in
+                                Button {
+                                    selectedTeamCode = team.code
+                                } label: {
+                                    VStack(spacing: 3) {
+                                        PredictionTeamLogo(team: team)
+                                        Text(team.code).font(.caption2.weight(.semibold))
+                                    }
+                                    .frame(minWidth: 56)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
             }
         }
         .padding(.vertical, 6)
