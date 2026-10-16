@@ -368,6 +368,7 @@ private struct PredictionMetricPanel: View {
     @AppStorage("iceometrics.predictions.lastFocusedTeamCode") private var lastFocusedTeamCode = ""
     @State private var iceoScrollLink = IceoTimelineScrollLink()
     @State private var focusedColumnIndex: Int?
+    @State private var jumpColumnIndex: Int?
 
     private var teamWidth: CGFloat { compact ? 82 : 105 }
     private var dateWidth: CGFloat { compact ? 58 : 62 }
@@ -387,7 +388,11 @@ private struct PredictionMetricPanel: View {
             Slider(
                 value: Binding(
                     get: { Double(displayColumnIndex) },
-                    set: { focusedColumnIndex = Int($0.rounded()) }
+                    set: {
+                        let selected = Int($0.rounded())
+                        focusedColumnIndex = selected
+                        jumpColumnIndex = selected
+                    }
                 ),
                 in: 0...Double(max(1, table.columns.count - 1)),
                 step: 1
@@ -396,7 +401,10 @@ private struct PredictionMetricPanel: View {
             Text(displayPredictionDate(table.columns[displayColumnIndex], season: season))
                 .font(.caption.monospacedDigit())
                 .frame(minWidth: 63, alignment: .trailing)
-            Button("Today") { focusedColumnIndex = nil }
+            Button("Today") {
+                focusedColumnIndex = todayIndex
+                jumpColumnIndex = todayIndex
+            }
                 .font(.caption)
                 .disabled(focusedColumnIndex == nil || displayColumnIndex == todayIndex)
         }
@@ -469,10 +477,24 @@ private struct PredictionMetricPanel: View {
                 compact: compact,
                 selectedTeamCode: $selectedTeamCode,
                 linkedHorizontalScroll: iceoScrollLink,
-                focusColumnIndex: displayColumnIndex
+                focusColumnIndex: displayColumnIndex,
+                jumpColumnIndex: jumpColumnIndex ?? todayIndex
             )
             .frame(maxHeight: .infinity)
-            .onChange(of: table.columns) { _, _ in focusedColumnIndex = nil }
+            .onReceive(iceoScrollLink.events) { event in
+                guard let centered = event.centeredColumn,
+                      !table.columns.isEmpty else { return }
+                let visible = min(max(0, centered), table.columns.count - 1)
+                if focusedColumnIndex != visible {
+                    // Scrolling changes the viewed date but never changes
+                    // the programmatic jump target (avoids snapping back).
+                    focusedColumnIndex = visible
+                }
+            }
+            .onChange(of: table.columns) { _, _ in
+                focusedColumnIndex = nil
+                jumpColumnIndex = nil
+            }
         }
     }
 
@@ -521,7 +543,7 @@ private struct PredictionMetricPanel: View {
                 columnWidth: dateWidth,
                 yMin: yDomain.0,
                 yMax: yDomain.1,
-                initialColumnIndex: displayColumnIndex,
+                initialColumnIndex: jumpColumnIndex ?? todayIndex,
                 height: 226,
                 showXLabels: false,
                 adaptiveYScale: false,
@@ -581,6 +603,7 @@ private struct PredictionSpreadsheet: View {
     @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
     let linkedHorizontalScroll: IceoTimelineScrollLink
     let focusColumnIndex: Int
+    let jumpColumnIndex: Int
 
     private let rowHeight: CGFloat = 36
 
@@ -723,7 +746,7 @@ private struct PredictionSpreadsheet: View {
                 rowHeaderWidth: teamColumnWidth,
                 rowHeight: rowHeight,
                 headerHeight: rowHeight,
-                initialColumnID: focusColumnIndex,
+                initialColumnID: jumpColumnIndex,
                 linkedHorizontalScroll: linkedHorizontalScroll,
                 linkedVerticalScroll: verticalScrollLink
             ) {
