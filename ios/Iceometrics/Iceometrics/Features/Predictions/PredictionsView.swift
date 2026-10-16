@@ -367,12 +367,40 @@ private struct PredictionMetricPanel: View {
     @Binding var selectedTeamCode: String?
     @AppStorage("iceometrics.predictions.lastFocusedTeamCode") private var lastFocusedTeamCode = ""
     @State private var iceoScrollLink = IceoTimelineScrollLink()
+    @State private var focusedColumnIndex: Int?
 
     private var teamWidth: CGFloat { compact ? 82 : 105 }
     private var dateWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
         predictionTodayColumnIndex(table.columns, season: season)
+    }
+
+    private var displayColumnIndex: Int {
+        min(max(0, focusedColumnIndex ?? todayIndex), max(0, table.columns.count - 1))
+    }
+
+    private var dateScrubber: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.secondary)
+            Slider(
+                value: Binding(
+                    get: { Double(displayColumnIndex) },
+                    set: { focusedColumnIndex = Int($0.rounded()) }
+                ),
+                in: 0...Double(max(1, table.columns.count - 1)),
+                step: 1
+            )
+            .accessibilityLabel("Prediction date")
+            Text(displayPredictionDate(table.columns[displayColumnIndex], season: season))
+                .font(.caption.monospacedDigit())
+                .frame(minWidth: 63, alignment: .trailing)
+            Button("Today") { focusedColumnIndex = nil }
+                .font(.caption)
+                .disabled(focusedColumnIndex == nil || displayColumnIndex == todayIndex)
+        }
+        .padding(.horizontal, 4)
     }
 
     private var yDomain: (Double, Double) {
@@ -401,9 +429,7 @@ private struct PredictionMetricPanel: View {
 
     private var projectionLeaders: [PredictionTeam] {
         guard projectedFieldCount > 0 else { return [] }
-        let index = table.columns.indices.reversed().first { column in
-            teams.contains { table.value(teamCode: $0.code, columnIndex: column) != nil }
-        } ?? todayIndex
+        let index = displayColumnIndex
         return Array(teams.sorted {
             let left = table.value(teamCode: $0.code, columnIndex: index) ?? -1
             let right = table.value(teamCode: $1.code, columnIndex: index) ?? -1
@@ -442,9 +468,11 @@ private struct PredictionMetricPanel: View {
                 season: season,
                 compact: compact,
                 selectedTeamCode: $selectedTeamCode,
-                linkedHorizontalScroll: iceoScrollLink
+                linkedHorizontalScroll: iceoScrollLink,
+                focusColumnIndex: displayColumnIndex
             )
             .frame(maxHeight: .infinity)
+            .onChange(of: table.columns) { _, _ in focusedColumnIndex = nil }
         }
     }
 
@@ -482,6 +510,8 @@ private struct PredictionMetricPanel: View {
                 }
 }
 
+            if table.columns.count > 1 { dateScrubber }
+
             AlignedTimelineGraph(
                 labels: table.columns.map {
                     displayPredictionDate($0, season: season)
@@ -491,7 +521,7 @@ private struct PredictionMetricPanel: View {
                 columnWidth: dateWidth,
                 yMin: yDomain.0,
                 yMax: yDomain.1,
-                initialColumnIndex: todayIndex,
+                initialColumnIndex: displayColumnIndex,
                 height: 226,
                 showXLabels: false,
                 adaptiveYScale: false,
@@ -550,6 +580,7 @@ private struct PredictionSpreadsheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
     let linkedHorizontalScroll: IceoTimelineScrollLink
+    let focusColumnIndex: Int
 
     private let rowHeight: CGFloat = 36
 
@@ -597,20 +628,11 @@ private struct PredictionSpreadsheet: View {
     @State private var tableVerticalOffset: CGFloat = 0
     private let latestPaneWidth: CGFloat = 235
 
-    private var latestAvailableColumn: Int {
-        guard !table.columns.isEmpty else { return 0 }
-        return table.columns.indices.reversed().first { index in
-            teams.contains { team in
-                table.value(teamCode: team.code, columnIndex: index) != nil
-            }
-        } ?? todayIndex
-    }
-
     // ICEOMETRICS_DOC_REMAINING_20261015_V1_PREDICTIONS
     private var latestBarPanel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                Text("LATEST · \(table.columns.isEmpty ? "—" : displayPredictionDate(table.columns[latestAvailableColumn], season: season))")
+                Text("SELECTED · \(table.columns.isEmpty ? "—" : displayPredictionDate(table.columns[focusColumnIndex], season: season))")
                     .font(.caption2.bold())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -629,7 +651,7 @@ private struct PredictionSpreadsheet: View {
                     ForEach(teams) { team in
                         let value = table.value(
                             teamCode: team.code,
-                            columnIndex: latestAvailableColumn
+                            columnIndex: focusColumnIndex
                         )
                         HStack(spacing: 7) {
                             GeometryReader { geo in
@@ -691,7 +713,7 @@ private struct PredictionSpreadsheet: View {
                 rowHeaderWidth: teamColumnWidth,
                 rowHeight: rowHeight,
                 headerHeight: rowHeight,
-                initialColumnID: todayIndex,
+                initialColumnID: focusColumnIndex,
                 linkedHorizontalScroll: linkedHorizontalScroll,
                 onVerticalScroll: { next in
                     if abs(next - tableVerticalOffset) > 0.75 {
@@ -713,7 +735,7 @@ private struct PredictionSpreadsheet: View {
             } header: { column in
                 dateHeader(
                     table.columns[column.id],
-                    isToday: column.id == todayIndex
+                    isToday: column.id == focusColumnIndex
                 )
             } rowHeader: { team in
                 Button {
@@ -742,7 +764,7 @@ private struct PredictionSpreadsheet: View {
             } cell: { team, column in
                 probabilityCell(
                     table.value(teamCode: team.code, columnIndex: column.id),
-                    isToday: column.id == todayIndex,
+                    isToday: column.id == focusColumnIndex,
                     teamCode: team.code,
                     bounds: probabilityBounds[column.id]
                 )
