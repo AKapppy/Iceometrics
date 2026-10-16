@@ -1445,7 +1445,7 @@ private struct IceometricsHistoryToolbar: View {
     let phases: [StatsPhase]
     let allowNegative: Bool
     @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
-    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.points.axis.v2") private var pointsAxis = "date"
     @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
 
     private var axis: Binding<String> {
@@ -1518,7 +1518,7 @@ private struct HistoryStatsPanel: View {
 
     // Persist independently for Points and Goal Differential, so returning to
     // a graph restores the viewer's preferred horizontal axis.
-    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.points.axis.v2") private var pointsAxis = "date"
     @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
     @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
 
