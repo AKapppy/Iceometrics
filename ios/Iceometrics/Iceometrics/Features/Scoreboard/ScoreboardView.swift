@@ -1555,8 +1555,10 @@ private struct IceometricsDocSmartSection: View {
         let headings = CGFloat(sectionGameCounts.count) * 45
         let gaps = CGFloat(max(0, totalRows - 1)) * gap
         let budget = (viewportHeight - 129 - headings - gaps) / CGFloat(totalRows)
-        // Sparse slates grow; crowded schedules scroll instead of crushing text.
-        return max(126, min(550, budget))
+        // Sparse slates use the available height instead of leaving a dead
+        // lower half on Mac/iPad. Busy slates retain compact, scrollable rows.
+        let sparse = sectionGameCounts.reduce(0, +) <= 4
+        return max(126, min(sparse ? 920 : 550, budget))
     }
 
     private func weight(_ game: HockeyGame, rivals: Set<String>) -> CGFloat {
@@ -1769,6 +1771,26 @@ private struct IceometricsDocSmartCard: View {
                                            value: away.map { $0.player }.joined(separator: " · "))
                             richTeamColumn(team: game.homeTeam.abbreviation, heading: "Goals",
                                            value: home.map { $0.player }.joined(separator: " · "))
+                        }
+                    }
+                    if (game.status == .live || game.status == .final),
+                       cardHeight >= 405, width >= 350,
+                       let lines = expandedDetail?.stats {
+                        ForEach(lines.filter { stat in
+                            ["Face-off %", "Power Play"].contains(stat.label)
+                                && stat.awayValue != NHLGameDetailService.missingText
+                                && stat.homeValue != NHLGameDetailService.missingText
+                        }) { stat in
+                            HStack(spacing: 8) {
+                                Text(stat.awayValue)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                                Text(stat.label)
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 78)
+                                Text(stat.homeValue)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .font(.caption2.monospacedDigit())
                         }
                     }
                     if let seasonSeriesText {
