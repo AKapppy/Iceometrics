@@ -397,22 +397,15 @@ nonisolated struct NHLGameDetailService: Sendable {
             )
         ]
 
-        let awayClubGoalies = dictionaries(awayClub?["goalies"])
-        let homeClubGoalies = dictionaries(homeClub?["goalies"])
         let boxPlayerStats = dictionary(boxscore?["playerByGameStats"])
         let awayBox = dictionary(boxPlayerStats["awayTeam"])
         let homeBox = dictionary(boxPlayerStats["homeTeam"])
 
-        let awayGoalie = goalieSlot(
-            boxGoalies: dictionaries(awayBox["goalies"]),
-            clubGoalies: awayClubGoalies,
-            gameStatus: game.status
-        )
-        let homeGoalie = goalieSlot(
-            boxGoalies: dictionaries(homeBox["goalies"]),
-            clubGoalies: homeClubGoalies,
-            gameStatus: game.status
-        )
+        // Never infer a starter from season totals or live save counts.
+        // An official starter flag is the only supported source until a
+        // documented MoneyPuck starter feed is integrated.
+        let awayGoalie = goalieSlot(boxGoalies: dictionaries(awayBox["goalies"]))
+        let homeGoalie = goalieSlot(boxGoalies: dictionaries(homeBox["goalies"]))
 
         let railAwayScratches = scratchesFromRightRail(
             rightRail, teamKey: "awayTeam", playerNames: playerNames
@@ -493,50 +486,16 @@ nonisolated struct NHLGameDetailService: Sendable {
     }
 
     private static func goalieSlot(
-        boxGoalies: [[String: Any]],
-        clubGoalies: [[String: Any]],
-        gameStatus: GameStatus
+        boxGoalies: [[String: Any]]
     ) -> NHLGoalieSlot? {
-        if let starter = boxGoalies.first(where: { boolean($0["starter"]) }) {
-            return NHLGoalieSlot(
-                label: "Confirmed",
-                name: playerName(starter) ?? missingText
-            )
+        // Only a documented boxscore "starter" boolean counts as a starter.
+        // The strongest season goalie or most active live goalie could be a
+        // backup, so neither is suitable as a substitute.
+        guard let starter = boxGoalies.first(where: { boolean($0["starter"]) }),
+              let name = playerName(starter) else {
+            return nil
         }
-
-        if gameStatus == .live || gameStatus == .final,
-           let active = boxGoalies.max(by: {
-               goalieActivity($0) < goalieActivity($1)
-           }), goalieActivity(active) > 0 {
-            return NHLGoalieSlot(
-                label: "Confirmed",
-                name: playerName(active) ?? missingText
-            )
-        }
-
-        let projected = clubGoalies.max {
-            goalieRanking($0) < goalieRanking($1)
-        }
-        if let projected {
-            return NHLGoalieSlot(
-                label: "Predicted",
-                name: playerName(projected) ?? missingText
-            )
-        }
-
-        return nil
-    }
-
-    private static func goalieActivity(_ row: [String: Any]) -> Int {
-        integer(row["shotsAgainst"]) * 100
-            + integer(row["saves"]) * 10
-            + integer(row["goalsAgainst"])
-    }
-
-    private static func goalieRanking(_ row: [String: Any]) -> Int {
-        integer(row["gamesStarted"]) * 10_000
-            + integer(row["gamesPlayed"]) * 100
-            + integer(row["wins"])
+        return NHLGoalieSlot(label: "NHL confirmed", name: name)
     }
 
     private static func scratchesFromRightRail(
