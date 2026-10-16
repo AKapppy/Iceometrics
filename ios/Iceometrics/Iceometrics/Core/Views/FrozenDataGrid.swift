@@ -2,6 +2,24 @@
 import SwiftUI
 import Combine
 
+struct IceoVerticalScrollEvent {
+    let y: CGFloat
+    let sender: UUID
+}
+
+@MainActor
+final class IceoVerticalScrollLink: ObservableObject {
+    let events = PassthroughSubject<IceoVerticalScrollEvent, Never>()
+    private var lastY: CGFloat = 0
+
+    func report(_ y: CGFloat, sender: UUID) {
+        let next = max(0, y)
+        guard abs(next - lastY) > 0.75 else { return }
+        lastY = next
+        events.send(IceoVerticalScrollEvent(y: next, sender: sender))
+    }
+}
+
 struct FrozenGridColumn<ID: Hashable>: Identifiable {
     let id: ID
     let width: CGFloat
@@ -46,6 +64,7 @@ struct FrozenDataGrid<
     let headerHeight: CGFloat
     let initialColumnID: ColumnID?
     let linkedHorizontalScroll: IceoTimelineScrollLink?
+    let linkedVerticalScroll: IceoVerticalScrollLink?
 
     private let onVerticalScroll: ((CGFloat) -> Void)?
     private let corner: () -> Corner
@@ -57,6 +76,12 @@ struct FrozenDataGrid<
     @StateObject private var verticalState = FrozenVerticalScrollState()
     @State private var iceoLinkedPosition = ScrollPosition()
     @State private var iceoScrollSender = UUID()
+    @State private var iceoVerticalSender = UUID()
+
+    private var iceoExternalVerticalScrolls: AnyPublisher<IceoVerticalScrollEvent, Never> {
+        linkedVerticalScroll?.events.eraseToAnyPublisher()
+            ?? Empty<IceoVerticalScrollEvent, Never>().eraseToAnyPublisher()
+    }
 
     private var iceoExternalScrolls: AnyPublisher<IceoTimelineScrollEvent, Never> {
         linkedHorizontalScroll?.events.eraseToAnyPublisher()
@@ -71,6 +96,7 @@ struct FrozenDataGrid<
         headerHeight: CGFloat,
         initialColumnID: ColumnID? = nil,
         linkedHorizontalScroll: IceoTimelineScrollLink? = nil,
+        linkedVerticalScroll: IceoVerticalScrollLink? = nil,
         onVerticalScroll: ((CGFloat) -> Void)? = nil,
         @ViewBuilder corner: @escaping () -> Corner,
         @ViewBuilder header: @escaping (FrozenGridColumn<ColumnID>) -> Header,
@@ -84,6 +110,7 @@ struct FrozenDataGrid<
         self.headerHeight = headerHeight
         self.initialColumnID = initialColumnID
         self.linkedHorizontalScroll = linkedHorizontalScroll
+        self.linkedVerticalScroll = linkedVerticalScroll
         self.onVerticalScroll = onVerticalScroll
         self.corner = corner
         self.header = header
@@ -151,10 +178,15 @@ struct FrozenDataGrid<
                     verticalState.update(offset.y)
                     onVerticalScroll?(offset.y)
                     linkedHorizontalScroll?.report(offset.x, sender: iceoScrollSender)
+                    linkedVerticalScroll?.report(offset.y, sender: iceoVerticalSender)
                 }
                 .onReceive(iceoExternalScrolls) { event in
                     guard event.sender != iceoScrollSender else { return }
                     iceoLinkedPosition.scrollTo(x: event.x)
+                }
+                .onReceive(iceoExternalVerticalScrolls) { event in
+                    guard event.sender != iceoVerticalSender else { return }
+                    iceoLinkedPosition.scrollTo(y: event.y)
                 }
                 .onAppear { scrollToInitial(proxy) }
                 .onChange(of: initialColumnID) { _, _ in
