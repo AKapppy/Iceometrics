@@ -1490,17 +1490,23 @@ private struct IceometricsDocSmartSection: View {
 
     private func isFavorite(_ game: HockeyGame) -> Bool {
         guard let favoriteTeamID else { return false }
-        return game.awayTeam.id == favoriteTeamID || game.homeTeam.id == favoriteTeamID
+        let code = favoriteCode
+        return game.awayTeam.id == favoriteTeamID
+            || game.homeTeam.id == favoriteTeamID
+            || (code != nil && (
+                game.awayTeam.abbreviation.uppercased() == code
+                || game.homeTeam.abbreviation.uppercased() == code
+            ))
     }
 
     private func lateClose(_ game: HockeyGame) -> Bool {
-        guard let away = game.awayScore, let home = game.homeScore,
-              abs(away - home) <= 1 else { return false }
-        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3)
+        guard game.status == .live, let away = game.awayScore,
+              let home = game.homeScore, abs(away - home) <= 1 else { return false }
+        return (game.periodNumber ?? 0) >= 3
     }
 
     private func overtime(_ game: HockeyGame) -> Bool {
-        guard game.status == .live || game.status == .final else { return false }
+        guard game.status == .live else { return false }
         let period = game.periodType?.uppercased() ?? ""
         return period == "OT" || period == "SO" || (game.periodNumber ?? 0) >= 4
     }
@@ -1663,22 +1669,14 @@ private struct IceometricsDocSmartCard: View {
 
     private var isOvertime: Bool {
         let type = game.periodType?.uppercased() ?? ""
-        return (game.status == .live || game.status == .final)
+        return game.status == .live
             && (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
     }
 
     private var isClose: Bool {
-        guard let a = game.awayScore, let h = game.homeScore else { return false }
-        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3) && abs(a - h) <= 1
-    }
-
-    private var accent: Color {
-        switch emphasis {
-        case .favorite: .accentColor
-        case .rival: .blue
-        case .close: .orange
-        case .normal: .clear
-        }
+        guard game.status == .live, let a = game.awayScore,
+              let h = game.homeScore else { return false }
+        return (game.periodNumber ?? 0) >= 3 && abs(a - h) <= 1
     }
 
     var body: some View {
@@ -1749,24 +1747,35 @@ private struct IceometricsDocSmartCard: View {
                     if game.status == .scheduled, let detail = expandedDetail {
                         let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
                         let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
-                        if let awayLeader, let homeLeader {
-                            Text("NHL leaders · \(game.awayTeam.abbreviation): \(awayLeader)  ·  \(game.homeTeam.abbreviation): \(homeLeader)")
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .lineLimit(1).minimumScaleFactor(0.65)
+                        if awayLeader != nil || homeLeader != nil {
+                            HStack(alignment: .top, spacing: 14) {
+                                richTeamColumn(team: game.awayTeam.abbreviation,
+                                               heading: "Team leader", value: awayLeader)
+                                richTeamColumn(team: game.homeTeam.abbreviation,
+                                               heading: "Team leader", value: homeLeader)
+                            }
                         }
                     }
-                    if game.status == .live || game.status == .final {
-                        if let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
-                            let latest = scorers.suffix(2)
-                            Text("Goals · " + latest.map { "\($0.team) \($0.player)" }.joined(separator: " · "))
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .lineLimit(2).minimumScaleFactor(0.7)
+                    if game.status == .live || game.status == .final,
+                       let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
+                        let away = scorers.filter {
+                            $0.team.uppercased() == game.awayTeam.abbreviation.uppercased()
+                        }.suffix(3)
+                        let home = scorers.filter {
+                            $0.team.uppercased() == game.homeTeam.abbreviation.uppercased()
+                        }.suffix(3)
+                        HStack(alignment: .top, spacing: 14) {
+                            richTeamColumn(team: game.awayTeam.abbreviation, heading: "Goals",
+                                           value: away.map { $0.player }.joined(separator: " · "))
+                            richTeamColumn(team: game.homeTeam.abbreviation, heading: "Goals",
+                                           value: home.map { $0.player }.joined(separator: " · "))
                         }
                     }
                     if let seasonSeriesText {
                         Text(seasonSeriesText)
-                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .font(.system(size: max(11, supportingSize * 0.72), weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2).minimumScaleFactor(0.78)
                     }
                 }
 
@@ -1784,11 +1793,6 @@ private struct IceometricsDocSmartCard: View {
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
             .overlay {
                 RoundedRectangle(cornerRadius: 18)
-                    .stroke(accent.opacity(emphasis == .normal ? 0 : 0.80),
-                            lineWidth: emphasis == .normal ? 0 : 2)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
                     .stroke(.quaternary, lineWidth: 1)
             }
             .task(id: "\(game.id)-\(game.status)-\(expanded)-\(loadRichDetail)") {
@@ -1803,6 +1807,17 @@ private struct IceometricsDocSmartCard: View {
         }
         .frame(height: cardHeight)
         .accessibilityElement(children: .combine)
+    }
+
+    private func richTeamColumn(team: String, heading: String, value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(team) · \(heading)")
+                .font(.caption2.bold()).foregroundStyle(.secondary)
+            Text(value?.isEmpty == false ? (value ?? "") : "Not reported")
+                .font(.caption.weight(.medium))
+                .lineLimit(3).minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func teamColumn(_ team: Team, shots: Int?, logoSize: CGFloat,
@@ -1833,7 +1848,9 @@ private struct IceometricsDocSmartCard: View {
         case .live:
             return game.timeRemaining.map { "LIVE · " + $0 } ?? "LIVE"
         case .final:
-            return isOvertime ? "FINAL · OT/SO" : "FINAL"
+            let type = game.periodType?.uppercased() ?? ""
+            return (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
+                ? "FINAL · OT/SO" : "FINAL"
         case .postponed: return "PPD"
         }
     }
