@@ -10,7 +10,14 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                ScoreboardView(viewModel: homeViewModel)
+                Group {
+                    if settings.selectedSeason == "2026-2027" {
+                        ScoreboardView(viewModel: homeViewModel)
+                    } else {
+                        ArchiveScoreboardView(season: settings.selectedSeason)
+                            .id(settings.selectedSeason)
+                    }
+                }
                     .toolbar {
                         settingsToolbarItem
                     }
@@ -24,7 +31,12 @@ struct RootView: View {
             .tag(AppTab.scoreboard)
 
             NavigationStack {
-                StatsView()
+                StatsView(
+                    viewModel: StatsViewModel(
+                        service: StatsDataService(season: settings.selectedSeason)
+                    )
+                )
+                    .id(settings.selectedSeason)
                     .toolbar {
                         settingsToolbarItem
                     }
@@ -38,7 +50,12 @@ struct RootView: View {
             .tag(AppTab.stats)
 
             NavigationStack {
-                PredictionsView()
+                PredictionsView(
+                    viewModel: PredictionsViewModel(
+                        service: PredictionDataService(season: settings.selectedSeason)
+                    )
+                )
+                    .id(settings.selectedSeason)
                     .toolbar {
                         settingsToolbarItem
                     }
@@ -52,7 +69,12 @@ struct RootView: View {
             .tag(AppTab.predictions)
 
             NavigationStack {
-                ModelsView()
+                ModelsView(
+                    viewModel: ModelsViewModel(
+                        service: ModelsDataService(season: settings.selectedSeason)
+                    )
+                )
+                    .id(settings.selectedSeason)
                     .toolbar {
                         settingsToolbarItem
                     }
@@ -270,5 +292,21 @@ private actor PreviewRepository:
                 SampleData.snapshot,
             origin: .fixture
         )
+    }
+}
+
+// One historical scoreboard instance per selected season; never affects WidgetKit.
+private struct ArchiveScoreboardView: View {
+    @StateObject private var viewModel: HomeViewModel
+
+    init(season: String) {
+        _viewModel = StateObject(wrappedValue: HomeViewModel(
+            repository: AppEnvironment.makeRepository(season: season),
+            enableLiveUpdates: false
+        ))
+    }
+
+    var body: some View {
+        ScoreboardView(viewModel: viewModel)
     }
 }

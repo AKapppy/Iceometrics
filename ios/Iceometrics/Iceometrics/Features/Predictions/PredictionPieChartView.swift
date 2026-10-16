@@ -483,6 +483,17 @@ struct PredictionPieChartView: View {
     }
 
     private func dateForColumn(_ raw: String) -> Date? {
+        // ICEOMETRICS_PREDICTION_ISO_DATE_V1
+        let dateParts = raw.split(separator: "-")
+        if dateParts.count == 3,
+           let year = Int(dateParts[0]),
+           let month = Int(dateParts[1]),
+           let day = Int(dateParts[2]) {
+            var eastern = Calendar(identifier: .gregorian)
+            eastern.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+            return eastern.date(from: DateComponents(year: year, month: month, day: day))
+        }
+
         let parts = raw.split(separator: "/")
 
         guard parts.count == 2,

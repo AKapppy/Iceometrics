@@ -25,12 +25,14 @@ nonisolated struct NHLGoalieSlot: Sendable, Equatable {
     let name: String
 }
 
+// ICEOMETRICS_NOTES_BIGPASS08_ASSISTS
 nonisolated struct NHLGoalScorer: Identifiable, Sendable, Equatable {
     let id: String
     let team: String
     let player: String
     let period: String
     let time: String
+    let assists: [String] // Parsed from NHL play-by-play when available.
 }
 
 nonisolated struct NHLPenaltySummary: Identifiable, Sendable, Equatable {
@@ -100,6 +102,8 @@ nonisolated struct NHLGameDetailService: Sendable {
             string: "\(base)/gamecenter/\(gameID)/play-by-play"
         ), let boxURL = URL(
             string: "\(base)/gamecenter/\(gameID)/boxscore"
+        ), let rightRailURL = URL(
+            string: "\(base)/gamecenter/\(gameID)/right-rail"
         ), let awayClubURL = URL(
             string: "\(base)/club-stats/\(game.awayTeam.abbreviation)/\(season)/\(gameType)"
         ), let homeClubURL = URL(
@@ -110,24 +114,28 @@ nonisolated struct NHLGameDetailService: Sendable {
 
         async let playData = Self.fetchDataIfAvailable(playURL)
         async let boxData = Self.fetchDataIfAvailable(boxURL)
+        async let railData = Self.fetchDataIfAvailable(rightRailURL)
         async let awayClubData = Self.fetchDataIfAvailable(awayClubURL)
         async let homeClubData = Self.fetchDataIfAvailable(homeClubURL)
 
-        let (playBlob, boxBlob, awayBlob, homeBlob) = await (
+        let (playBlob, boxBlob, railBlob, awayBlob, homeBlob) = await (
             playData,
             boxData,
+            railData,
             awayClubData,
             homeClubData
         )
 
         let playByPlay = Self.jsonObject(playBlob)
         let boxscore = Self.jsonObject(boxBlob)
+        let rightRail = Self.jsonObject(railBlob)
         let awayClub = Self.jsonObject(awayBlob)
         let homeClub = Self.jsonObject(homeBlob)
 
         return Self.buildDetail(
             playByPlay: playByPlay,
             boxscore: boxscore,
+            rightRail: rightRail,
             awayClub: awayClub,
             homeClub: homeClub,
             game: game
@@ -145,6 +153,7 @@ nonisolated struct NHLGameDetailService: Sendable {
         return buildDetail(
             playByPlay: root,
             boxscore: nil,
+            rightRail: nil,
             awayClub: nil,
             homeClub: nil,
             game: game
@@ -154,6 +163,7 @@ nonisolated struct NHLGameDetailService: Sendable {
     private static func buildDetail(
         playByPlay: [String: Any]?,
         boxscore: [String: Any]?,
+        rightRail: [String: Any]?,
         awayClub: [String: Any]?,
         homeClub: [String: Any]?,
         game: HockeyGame
@@ -217,6 +227,17 @@ nonisolated struct NHLGameDetailService: Sendable {
                 let scorer = playerNames[scorerID]
                     ?? localizedText(details["scoringPlayerName"])
                     ?? Self.missingText
+                // NHL play-by-play identifies up to two assisting players.
+                // Suppress missing/unknown values instead of showing bogus NF.
+                let assistingPlayers: [(Int, String?)] = [
+                    (integer(details["assist1PlayerId"]),
+                     localizedText(details["assist1PlayerName"])),
+                    (integer(details["assist2PlayerId"]),
+                     localizedText(details["assist2PlayerName"]))
+                ]
+                let assists = unique(assistingPlayers.compactMap { id, name in
+                    playerNames[id] ?? name
+                })
                 goalScorers.append(
                     NHLGoalScorer(
                         id: "goal-\(index)",
@@ -226,7 +247,8 @@ nonisolated struct NHLGameDetailService: Sendable {
                         player: scorer,
                         period: periodLabel(period),
                         time: string(play["timeInPeriod"]).nilIfEmpty
-                            ?? Self.missingText
+                            ?? Self.missingText,
+                        assists: assists
                     )
                 )
             }
@@ -310,6 +332,13 @@ nonisolated struct NHLGameDetailService: Sendable {
             || game.homeShots != nil
             || !shotsByPeriod.isEmpty
         let faceoffTotal = awayStats.faceoffWins + homeStats.faceoffWins
+        // NHL right-rail reports the actual game PP totals (e.g. 1/3).
+        // Do not derive opportunities or invent a 0 when absent.
+        let powerPlayRow = dictionaries(rightRail?["teamGameStats"]).first {
+            string($0["category"]).lowercased() == "powerplay"
+        }
+        let awayPowerPlay = string(powerPlayRow?["awayValue"]).nilIfEmpty
+        let homePowerPlay = string(powerPlayRow?["homeValue"]).nilIfEmpty
 
         let stats = [
             NHLGameStatLine(
@@ -328,8 +357,8 @@ nonisolated struct NHLGameDetailService: Sendable {
             ),
             NHLGameStatLine(
                 label: "Power Play",
-                awayValue: Self.missingText,
-                homeValue: Self.missingText
+                awayValue: awayPowerPlay ?? Self.missingText,
+                homeValue: homePowerPlay ?? Self.missingText
             ),
             statLine(
                 label: "Penalty Minutes",
@@ -385,20 +414,27 @@ nonisolated struct NHLGameDetailService: Sendable {
             gameStatus: game.status
         )
 
+        let railAwayScratches = scratchesFromRightRail(
+            rightRail, teamKey: "awayTeam", playerNames: playerNames
+        )
+        let railHomeScratches = scratchesFromRightRail(
+            rightRail, teamKey: "homeTeam", playerNames: playerNames
+        )
+        let awayScratches = railAwayScratches.isEmpty ? scratches(
+            boxscore: boxscore, teamKey: "awayTeam", playerNames: playerNames
+        ) : railAwayScratches
+        let homeScratches = railHomeScratches.isEmpty ? scratches(
+            boxscore: boxscore, teamKey: "homeTeam", playerNames: playerNames
+        ) : railHomeScratches
+
         return NHLGameDetail(
             shotsByPeriod: periods,
             stats: stats,
             awayGoalie: awayGoalie,
             homeGoalie: homeGoalie,
             goalScorers: goalScorers,
-            awayScratches: scratches(
-                boxscore: boxscore,
-                teamKey: "awayTeam"
-            ),
-            homeScratches: scratches(
-                boxscore: boxscore,
-                teamKey: "homeTeam"
-            ),
+            awayScratches: awayScratches,
+            homeScratches: homeScratches,
             awayLeaders: leaders(from: awayClub),
             homeLeaders: leaders(from: homeClub),
             specialTeams: NHLSpecialTeamsContext(
@@ -503,9 +539,25 @@ nonisolated struct NHLGameDetailService: Sendable {
             + integer(row["wins"])
     }
 
+    private static func scratchesFromRightRail(
+        _ rightRail: [String: Any]?,
+        teamKey: String,
+        playerNames: [Int: String]
+    ) -> [String] {
+        let gameInfo = dictionary(rightRail?["gameInfo"])
+        let teamInfo = dictionary(gameInfo[teamKey])
+        let names = dictionaries(teamInfo["scratches"]).compactMap { row in
+            playerName(row)
+                ?? playerNames[integer(row["id"])]
+                ?? playerNames[integer(row["playerId"])]
+        }
+        return unique(names)
+    }
+
     private static func scratches(
         boxscore: [String: Any]?,
-        teamKey: String
+        teamKey: String,
+        playerNames: [Int: String]
     ) -> [String] {
         guard let boxscore else { return [] }
 
@@ -528,7 +580,11 @@ nonisolated struct NHLGameDetailService: Sendable {
                 "scratchedSkaters",
                 "projectedScratches"
             ] {
-                let names = dictionaries(source[key]).compactMap(playerName)
+                let names = dictionaries(source[key]).compactMap { row in
+                    playerName(row)
+                        ?? playerNames[integer(row["playerId"])]
+                        ?? playerNames[integer(row["id"])]
+                }
                 if !names.isEmpty {
                     return unique(names)
                 }

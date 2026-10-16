@@ -26,6 +26,20 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Season") {
+                Picker("NHL Season", selection: $settings.selectedSeason) {
+                    // Iceometrics historical seasons 2018 through present.
+                    ForEach((2019...2026).reversed(), id: \.self) { start in
+                        Text(verbatim: "\(start)–\(String(format: "%02d", (start + 1) % 100))")
+                            .tag("\(start)-\(start + 1)")
+                    }
+                }
+
+                Text("Applies to Scoreboard, Stats, Predictions, and Models. Widgets always show the current season.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Favorite Team") {
                 Picker(
                     "Team",

@@ -1,3 +1,4 @@
+// ICEOMETRICS_NOTES_BATCH05_LATEST_PROBABILITY_BARS_V2
 import SwiftUI
 import Combine
 
@@ -15,7 +16,7 @@ private final class FrozenHorizontalScrollState: ObservableObject {
     @Published private(set) var offset: CGFloat = 0
 
     func update(_ next: CGFloat) {
-        guard abs(next - offset) > 0.25 else { return }
+        guard abs(next - offset) > 1.0 else { return }
         offset = next
     }
 }
@@ -25,7 +26,7 @@ private final class FrozenVerticalScrollState: ObservableObject {
     @Published private(set) var offset: CGFloat = 0
 
     func update(_ next: CGFloat) {
-        guard abs(next - offset) > 0.25 else { return }
+        guard abs(next - offset) > 1.0 else { return }
         offset = next
     }
 }
@@ -44,7 +45,9 @@ struct FrozenDataGrid<
     let rowHeight: CGFloat
     let headerHeight: CGFloat
     let initialColumnID: ColumnID?
+    let linkedHorizontalScroll: IceoTimelineScrollLink?
 
+    private let onVerticalScroll: ((CGFloat) -> Void)?
     private let corner: () -> Corner
     private let header: (FrozenGridColumn<ColumnID>) -> Header
     private let rowHeader: (Row) -> RowHeader
@@ -52,6 +55,13 @@ struct FrozenDataGrid<
 
     @StateObject private var horizontalState = FrozenHorizontalScrollState()
     @StateObject private var verticalState = FrozenVerticalScrollState()
+    @State private var iceoLinkedPosition = ScrollPosition()
+    @State private var iceoScrollSender = UUID()
+
+    private var iceoExternalScrolls: AnyPublisher<IceoTimelineScrollEvent, Never> {
+        linkedHorizontalScroll?.events.eraseToAnyPublisher()
+            ?? Empty<IceoTimelineScrollEvent, Never>().eraseToAnyPublisher()
+    }
 
     init(
         rows: [Row],
@@ -60,6 +70,8 @@ struct FrozenDataGrid<
         rowHeight: CGFloat,
         headerHeight: CGFloat,
         initialColumnID: ColumnID? = nil,
+        linkedHorizontalScroll: IceoTimelineScrollLink? = nil,
+        onVerticalScroll: ((CGFloat) -> Void)? = nil,
         @ViewBuilder corner: @escaping () -> Corner,
         @ViewBuilder header: @escaping (FrozenGridColumn<ColumnID>) -> Header,
         @ViewBuilder rowHeader: @escaping (Row) -> RowHeader,
@@ -71,6 +83,8 @@ struct FrozenDataGrid<
         self.rowHeight = rowHeight
         self.headerHeight = headerHeight
         self.initialColumnID = initialColumnID
+        self.linkedHorizontalScroll = linkedHorizontalScroll
+        self.onVerticalScroll = onVerticalScroll
         self.corner = corner
         self.header = header
         self.rowHeader = rowHeader
@@ -108,10 +122,18 @@ struct FrozenDataGrid<
                                 )
                                 .zIndex(3)
 
-                                ForEach(columns) { column in
-                                    cell(row, column)
-                                        .frame(width: column.width, height: rowHeight)
+                                // ICEO_LAZY_GRID_COLUMNS: only construct visible dates.
+                                // Keep the frozen team cell OUTSIDE the lazy stack.
+                                LazyHStack(spacing: 0) {
+                                    ForEach(columns) { column in
+                                        cell(row, column)
+                                            .frame(width: column.width, height: rowHeight)
+                                    }
                                 }
+                                .frame(
+                                    width: max(0, contentWidth - rowHeaderWidth),
+                                    alignment: .leading
+                                )
                             }
                             .frame(width: contentWidth, alignment: .leading)
                         }
@@ -121,11 +143,18 @@ struct FrozenDataGrid<
                         alignment: .topLeading
                     )
                 }
+                .scrollPosition($iceoLinkedPosition)
                 .onScrollGeometryChange(for: CGPoint.self) { geometry in
                     geometry.contentOffset
                 } action: { _, offset in
                     horizontalState.update(offset.x)
                     verticalState.update(offset.y)
+                    onVerticalScroll?(offset.y)
+                    linkedHorizontalScroll?.report(offset.x, sender: iceoScrollSender)
+                }
+                .onReceive(iceoExternalScrolls) { event in
+                    guard event.sender != iceoScrollSender else { return }
+                    iceoLinkedPosition.scrollTo(x: event.x)
                 }
                 .onAppear { scrollToInitial(proxy) }
                 .onChange(of: initialColumnID) { _, _ in
@@ -171,12 +200,18 @@ private struct FrozenGridHeaderRow<
                 .offset(x: horizontalState.offset)
                 .zIndex(5)
 
-            ForEach(columns) { column in
-                header(column)
-                    .frame(width: column.width, height: headerHeight)
-                    .background(.background)
-                    .id(FrozenGridScrollTarget(id: column.id))
+            LazyHStack(spacing: 0) {
+                ForEach(columns) { column in
+                    header(column)
+                        .frame(width: column.width, height: headerHeight)
+                        .background(.background)
+                        .id(FrozenGridScrollTarget(id: column.id))
+                }
             }
+            .frame(
+                width: columns.reduce(CGFloat.zero) { $0 + $1.width },
+                alignment: .leading
+            )
         }
         .background(.background)
         .offset(y: verticalState.offset)

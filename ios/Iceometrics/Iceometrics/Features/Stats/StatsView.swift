@@ -2,9 +2,37 @@ import SwiftUI
 import Charts
 import Foundation
 
+/// Consistent good/neutral/bad coloring without changing the user's accent.
+enum StatsPerformancePalette {
+    static let good = Color(red: 0.12, green: 0.52, blue: 0.88)
+    static let bad = Color(red: 0.90, green: 0.24, blue: 0.30)
+    static let neutral = Color(red: 0.49, green: 0.52, blue: 0.56)
+
+    /// Continuous bad > neutral gray > good, even if the team accent is red.
+    static func relative(_ value: Double) -> Color {
+        let rank = min(1.0, max(0.0, value))
+        let amount = abs(rank - 0.5) * 2.0
+        let gray = (r: 0.49, g: 0.52, b: 0.56)
+        let target = rank >= 0.5
+            ? (r: 0.12, g: 0.52, b: 0.88)
+            : (r: 0.90, g: 0.24, b: 0.30)
+        return Color(
+            red: gray.r + (target.r - gray.r) * amount,
+            green: gray.g + (target.g - gray.g) * amount,
+            blue: gray.b + (target.b - gray.b) * amount
+        ).opacity(0.30)
+    }
+
+    static func signed(_ value: Double, extent: Double) -> Color {
+        let limit = max(1.0, extent)
+        return relative(0.5 + 0.5 * min(1.0, max(-1.0, value / limit)))
+    }
+}
+
 struct StatsView: View {
     @StateObject private var viewModel: StatsViewModel
     @State private var selectedSection: StatsSection = .teamStats
+    @AppStorage("iceometrics.stats.section") private var savedSection = "teamStats"
     @State private var selectedTeamCode: String?
     @State private var hasInitializedTeamSelection = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -39,6 +67,12 @@ struct StatsView: View {
             }
         }
         .navigationTitle("Stats")
+        .onAppear {
+            selectedSection = StatsSection(rawValue: savedSection) ?? .teamStats
+        }
+        .onChange(of: selectedSection) { _, newSection in
+            savedSection = newSection.rawValue
+        }
         .toolbar {
             ToolbarItem {
                 Button {
@@ -252,12 +286,13 @@ private enum StatsSection: String, CaseIterable, Identifiable {
 private struct StatsTabButtonStyle: ButtonStyle {
     let isSelected: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.iceometricsAccentForegroundColor) private var accentForegroundColor
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, horizontalSizeClass == .compact ? 8 : 12)
             .padding(.vertical, horizontalSizeClass == .compact ? 6 : 7)
-            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .foregroundStyle(isSelected ? accentForegroundColor : Color.primary)
             .background(
                 isSelected
                     ? Color.accentColor
@@ -319,11 +354,12 @@ private struct StatsPanelHeader: View {
 }
 
 private struct TeamStatsPanel: View {
+    // ICEOMETRICS_NOTES_BATCH01_SORT_V1
     let snapshot: StatsSnapshot
     @Binding var selectedTeamCode: String?
     @State private var phase: StatsPhase = .regular
-    @State private var sortKey: TeamSortKey = .team
-    @State private var descending = false
+    @State private var sortKey: TeamSortKey = .pointsPercentage
+    @State private var descending = true
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var phases: [StatsPhase] {
@@ -472,9 +508,11 @@ private struct TeamStatsTable: View {
     let compact: Bool
     @Binding var selectedTeamCode: String?
     let onSort: (TeamSortKey) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
 
-    private let rowHeight: CGFloat = 40
-    private var teamWidth: CGFloat { compact ? 78 : 86 }
+    private let rowHeight: CGFloat = 36
+    private var teamWidth: CGFloat { compact ? 76 : 82 }
 
     private var columns: [FrozenGridColumn<TeamSortKey>] {
         if compact {
@@ -483,33 +521,40 @@ private struct TeamStatsTable: View {
             return [
                 // Keep the iPhone table dense, but never squeeze values into
                 // each other. Horizontal scrolling is preferable to clipping.
-                FrozenGridColumn(id: .record, width: 86),
-                FrozenGridColumn(id: .gp, width: 42),
-                FrozenGridColumn(id: .pts, width: 46),
-                FrozenGridColumn(id: .gf, width: 42),
-                FrozenGridColumn(id: .ga, width: 42),
-                FrozenGridColumn(id: .gd, width: 46),
-                FrozenGridColumn(id: .pointsPercentage, width: 62),
-                FrozenGridColumn(id: .winPercentage, width: 62),
+                FrozenGridColumn(id: .record, width: 84),
+                FrozenGridColumn(id: .gp, width: 40),
+                FrozenGridColumn(id: .pts, width: 44),
+                FrozenGridColumn(id: .gf, width: 40),
+                FrozenGridColumn(id: .ga, width: 40),
+                FrozenGridColumn(id: .gd, width: 44),
+                FrozenGridColumn(id: .pointsPercentage, width: 58),
+                FrozenGridColumn(id: .winPercentage, width: 58),
             ]
         }
 
         return [
-            FrozenGridColumn(id: .record, width: 96),
-            FrozenGridColumn(id: .gp, width: 48),
-            FrozenGridColumn(id: .w, width: 46),
-            FrozenGridColumn(id: .l, width: 46),
-            FrozenGridColumn(id: .pts, width: 48),
-            FrozenGridColumn(id: .gf, width: 46),
-            FrozenGridColumn(id: .ga, width: 46),
-            FrozenGridColumn(id: .gd, width: 46),
-            FrozenGridColumn(id: .pointsPercentage, width: 64),
-            FrozenGridColumn(id: .winPercentage, width: 64),
+            FrozenGridColumn(id: .record, width: 92),
+            FrozenGridColumn(id: .gp, width: 44),
+            FrozenGridColumn(id: .w, width: 42),
+            FrozenGridColumn(id: .l, width: 42),
+            FrozenGridColumn(id: .pts, width: 44),
+            FrozenGridColumn(id: .gf, width: 42),
+            FrozenGridColumn(id: .ga, width: 42),
+            FrozenGridColumn(id: .gd, width: 42),
+            FrozenGridColumn(id: .pointsPercentage, width: 60),
+            FrozenGridColumn(id: .winPercentage, width: 60),
         ]
     }
 
     var body: some View {
-        FrozenDataGrid(
+        // One min/max per metric rather than a full-team scan in every cell.
+        let performanceRanges: [TeamSortKey: (low: Double, high: Double)] =
+            Dictionary(uniqueKeysWithValues: TeamSortKey.allCases.map { key in
+                let values = rows.compactMap { numericValue($0, key: key) }
+                return (key, (low: values.min() ?? 0, high: values.max() ?? 0))
+            })
+
+        return FrozenDataGrid(
             rows: rows,
             columns: columns,
             rowHeaderWidth: teamWidth,
@@ -526,7 +571,7 @@ private struct TeamStatsTable: View {
                     ? nil
                     : row.teamCode
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: 4) {
                     StatsTeamLogo(
                         team: snapshot.team(for: row.teamCode),
                         size: 22
@@ -535,7 +580,7 @@ private struct TeamStatsTable: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 3)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .overlay {
@@ -549,7 +594,8 @@ private struct TeamStatsTable: View {
             }
             .buttonStyle(.plain)
         } cell: { row, column in
-            statCell(row, key: column.id)
+            let bounds = performanceRanges[column.id] ?? (low: 0, high: 0)
+            statCell(row, key: column.id, low: bounds.low, high: bounds.high)
         }
         .clipShape(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -594,24 +640,24 @@ private struct TeamStatsTable: View {
     @ViewBuilder
     private func statCell(
         _ row: TeamStatsRow,
-        key: TeamSortKey
+        key: TeamSortKey,
+        low: Double,
+        high: Double
     ) -> some View {
-        let values = rows.compactMap {
-            numericValue($0, key: key)
-        }
-        let low = values.min() ?? 0
-        let high = values.max() ?? low
         let inverse = key == .l || key == .ga
 
         Text(textValue(row, key: key))
             .font(.system(.caption, design: .monospaced).weight(.medium))
+            .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 heatColor(
+                    teamCode: favoritePaletteTeamCode ?? "",
                     value: numericValue(row, key: key),
                     low: low,
                     high: high,
-                    inverse: inverse
+                    inverse: inverse,
+                    key: key
                 )
             )
             .overlay(alignment: .leading) {
@@ -666,22 +712,30 @@ private struct TeamStatsTable: View {
     }
 
     private func heatColor(
+        teamCode: String,
         value: Double?,
         low: Double,
         high: Double,
-        inverse: Bool
+        inverse: Bool,
+        key: TeamSortKey
     ) -> Color {
+        // Games played does not indicate performance quality.
+        if key == .gp || key == .record || key == .team {
+            return TeamPerformancePalette.cellColor(
+                teamCode: teamCode, score: 0, scheme: colorScheme
+            )
+        }
         guard let value, high > low else {
-            return Color.primary.opacity(0.018)
+            return TeamPerformancePalette.cellColor(
+                teamCode: teamCode, score: 0, scheme: colorScheme
+            )
         }
-
-        var rank = (value - low) / (high - low)
-        if inverse {
-            rank = 1 - rank
-        }
-
-        return Color.accentColor.opacity(
-            0.025 + (0.14 * rank)
+        let rank = min(max((value - low) / (high - low), 0), 1)
+        let goodRank = inverse ? 1 - rank : rank
+        return TeamPerformancePalette.cellColor(
+            teamCode: teamCode,
+            score: (2 * goodRank) - 1,
+            scheme: colorScheme
         )
     }
 }
@@ -773,10 +827,12 @@ private struct GameStatsTableView: View {
     let snapshot: StatsSnapshot
     let table: GameStatsTable
     @Binding var selectedTeamCode: String?
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
 
-    private let rowHeight: CGFloat = 40
-    private let teamWidth: CGFloat = 90
-    private let dateWidth: CGFloat = 58
+    private let rowHeight: CGFloat = 36
+    private let teamWidth: CGFloat = 82
+    private let dateWidth: CGFloat = 52
 
     private var todayIndex: Int {
         statsTodayColumnIndex(table.columns)
@@ -825,13 +881,13 @@ private struct GameStatsTableView: View {
             Button {
                 selectedTeamCode = selectedTeamCode == team.code ? nil : team.code
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: 4) {
                     StatsTeamLogo(team: team, size: 22)
                     Text(team.code)
                         .font(.subheadline.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 3)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
                 .overlay {
@@ -847,8 +903,9 @@ private struct GameStatsTableView: View {
 
             Text(result)
                 .font(.system(.caption, design: .monospaced).weight(.bold))
+                .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(resultColor(result))
+                .background(resultColor(result, teamCode: favoritePaletteTeamCode ?? ""))
                 .overlay(alignment: .leading) { tableVerticalHairline }
                 .overlay(alignment: .bottom) { tableHorizontalHairline }
         }
@@ -889,19 +946,20 @@ private struct GameStatsTableView: View {
         return 0
     }
 
-    private func resultColor(_ result: String) -> Color {
-        let rank: Double
+    private func resultColor(_ result: String, teamCode: String) -> Color {
+        let score: Double
         switch result {
-        case "W": rank = 1.0
-        case "OTW": rank = 0.84
-        case "SOW": rank = 0.70
-        case "SOL": rank = 0.52
-        case "OTL": rank = 0.36
-        case "L": rank = 0.18
-        default: return Color.primary.opacity(0.015)
+        case "W": score = 1.0
+        case "OTW": score = 0.83
+        case "SOW": score = 0.68
+        case "SOL": score = -0.68
+        case "OTL": score = -0.83
+        case "L": score = -1.0
+        default: return .clear
         }
-
-        return Color.accentColor.opacity(0.035 + rank * 0.16)
+        return TeamPerformancePalette.cellColor(
+            teamCode: teamCode, score: score, scheme: colorScheme
+        )
     }
 }
 
@@ -1031,11 +1089,13 @@ private struct PlayerCategoryPanel: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 10) {
                                 ForEach(topPlayers(for: stat, limit: 5)) { player in
-                                    PlayerLeaderCard(
-                                        player: player,
-                                        stat: stat,
-                                        snapshot: snapshot
-                                    )
+                                    if player.value(stat) == 0 {
+                                        IceometricsZeroPlayerCard()
+                                    } else {
+                                        PlayerLeaderCard(
+                                            player: player, stat: stat, snapshot: snapshot
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1045,11 +1105,13 @@ private struct PlayerCategoryPanel: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(topPlayers(for: selectedStat, limit: 25)) { player in
-                        PlayerLeaderRow(
-                            player: player,
-                            stat: selectedStat,
-                            snapshot: snapshot
-                        )
+                        if player.value(selectedStat) == 0 {
+                            IceometricsZeroPlayerRow()
+                        } else {
+                            PlayerLeaderRow(
+                                player: player, stat: selectedStat, snapshot: snapshot
+                            )
+                        }
                     }
                 }
             }
@@ -1068,6 +1130,49 @@ private struct PlayerCategoryPanel: View {
                 return $0.value(stat) > $1.value(stat)
             }.prefix(limit)
         )
+    }
+}
+
+private struct IceometricsZeroPlayerCard: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "person.crop.square.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 75, height: 94)
+                .foregroundStyle(.tertiary)
+            Text("Data pending")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 140)
+            Text("—")
+                .font(.title2.bold())
+                .foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .frame(width: 160)
+        .frame(minHeight: 186)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityLabel("Player leader data unavailable")
+    }
+}
+
+private struct IceometricsZeroPlayerRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.crop.square.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .foregroundStyle(.tertiary)
+            Text("Data pending")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("—").foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 7)
+        .accessibilityLabel("Player leader data unavailable")
     }
 }
 
@@ -1184,10 +1289,11 @@ private struct PointsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            StatsPanelHeader(
+            IceometricsHistoryToolbar(
                 title: "Points",
                 selection: $phase,
-                phases: phases
+                phases: phases,
+                allowNegative: false
             )
 
             if let table = snapshot.pointsHistory(for: phase) {
@@ -1195,6 +1301,8 @@ private struct PointsPanel: View {
                     title: "Points",
                     table: table,
                     teams: snapshot.teams,
+                    games: snapshot.games,
+                    phase: phase,
                     selectedTeamCode: $selectedTeamCode,
                     allowNegative: false
                 )
@@ -1245,10 +1353,11 @@ private struct GoalDifferentialPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            StatsPanelHeader(
+            IceometricsHistoryToolbar(
                 title: "Goal Differential",
                 selection: $phase,
-                phases: phases
+                phases: phases,
+                allowNegative: true
             )
 
             if let table = snapshot.goalDifferentialHistory(for: phase) {
@@ -1256,6 +1365,8 @@ private struct GoalDifferentialPanel: View {
                     title: "Goal Differential",
                     table: table,
                     teams: snapshot.teams,
+                    games: snapshot.games,
+                    phase: phase,
                     selectedTeamCode: $selectedTeamCode,
                     allowNegative: true
                 )
@@ -1279,16 +1390,162 @@ private struct GoalDifferentialPanel: View {
     }
 }
 
+// ICEOMETRICS_NOTES_BATCH03_STATS_CHARTS_V1
+// Focus controls share a scope across both historical graphs. Team membership
+// matches the 2026 NHL division alignment (including Utah Mammoth, UTA).
+private enum IceometricsHistoryFocus: String, CaseIterable, Identifiable {
+    case league, east, west, atlantic, metropolitan, central, pacific
+
+    var id: String { rawValue }
+
+    var title: String {
+        return switch self {
+        case .league: "Whole League"
+        case .east: "Eastern Conference"
+        case .west: "Western Conference"
+        case .atlantic: "Atlantic Division"
+        case .metropolitan: "Metropolitan Division"
+        case .central: "Central Division"
+        case .pacific: "Pacific Division"
+        }
+    }
+
+    var members: Set<String>? {
+        return switch self {
+        case .league: Optional<Set<String>>.none
+        case .east: Self.atlanticTeams.union(Self.metro)
+        case .west: Self.centralTeams.union(Self.pacificTeams)
+        case .atlantic: Self.atlanticTeams
+        case .metropolitan: Self.metro
+        case .central: Self.centralTeams
+        case .pacific: Self.pacificTeams
+        }
+    }
+
+    private static let atlanticTeams: Set<String> = [
+        "BOS", "BUF", "DET", "FLA", "MTL", "OTT", "TBL", "TOR"
+    ]
+    private static let metro: Set<String> = [
+        "CAR", "CBJ", "NJD", "NYI", "NYR", "PHI", "PIT", "WSH"
+    ]
+    private static let centralTeams: Set<String> = [
+        "CHI", "COL", "DAL", "MIN", "NSH", "STL", "UTA", "WPG"
+    ]
+    private static let pacificTeams: Set<String> = [
+        "ANA", "CGY", "EDM", "LAK", "SEA", "SJS", "VAN", "VGK"
+    ]
+}
+
+// ICEOMETRICS_NOTES_BATCH04_CHART_FOCUS_TOOLBAR_V1
+// Controls are on the same line as the graph title/phase on spacious screens.
+// Compact widths stack naturally instead of squeezing or clipping pickers.
+private struct IceometricsHistoryToolbar: View {
+    let title: String
+    @Binding var selection: StatsPhase
+    let phases: [StatsPhase]
+    let allowNegative: Bool
+    @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
+    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
+
+    private var axis: Binding<String> {
+        Binding(get: { allowNegative ? goalAxis : pointsAxis },
+                set: { next in
+                    if allowNegative { goalAxis = next } else { pointsAxis = next }
+                })
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            // Three zones: title + phases left, X-axis centered, Focus right.
+            // This option needs genuine room; otherwise use the stacked layout.
+            ZStack {
+                HStack(spacing: 12) {
+                    Text(title)
+                        .font(.title2.bold())
+                        .fixedSize(horizontal: true, vertical: false)
+                    StatsPhasePicker(selection: $selection, phases: phases)
+                        .frame(width: 300)
+                    Spacer(minLength: 0)
+                }
+                axisPicker
+                HStack { Spacer(minLength: 0); focusPicker }
+            }
+            .frame(minWidth: 1120)
+            .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 8) {
+                StatsPanelHeader(title: title, selection: $selection, phases: phases)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { axisPicker; Spacer(minLength: 0); focusPicker }
+                    VStack(alignment: .leading, spacing: 8) {
+                        axisPicker
+                        focusPicker
+                    }
+                }
+            }
+        }
+    }
+
+    private var axisPicker: some View {
+        Picker("X-Axis", selection: axis) {
+            Text("Date").tag("date")
+            Text("Games Played").tag("games")
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 215)
+    }
+    private var focusPicker: some View {
+        Picker("Focus", selection: $focusValue) {
+            ForEach(IceometricsHistoryFocus.allCases) { option in
+                Text(option.title).tag(option.rawValue)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 195)
+    }
+}
+
+// ICEOMETRICS_NOTES_BIG_PASS_07_V1_STATS
 private struct HistoryStatsPanel: View {
     let title: String
     let table: StatsHistoryTable
     let teams: [StatsTeam]
+    let games: [StatsGame]
+    let phase: StatsPhase
     @Binding var selectedTeamCode: String?
     let allowNegative: Bool
 
-    private let rowHeight: CGFloat = 38
-    private let teamWidth: CGFloat = 90
-    private let dateWidth: CGFloat = 58
+    // Persist independently for Points and Goal Differential, so returning to
+    // a graph restores the viewer's preferred horizontal axis.
+    @AppStorage("iceometrics.stats.graph.points.axis") private var pointsAxis = "games"
+    @AppStorage("iceometrics.stats.graph.goalDifferential.axis") private var goalAxis = "date"
+    @AppStorage("iceometrics.stats.graph.focus") private var focusValue = "league"
+
+    private var gamesAxis: Bool {
+        allowNegative ? goalAxis == "games" : pointsAxis == "games"
+    }
+
+    private var axisSelection: Binding<String> {
+        Binding(
+            get: { allowNegative ? goalAxis : pointsAxis },
+            set: { value in
+                if allowNegative { goalAxis = value }
+                else { pointsAxis = value }
+            }
+        )
+    }
+
+    private var focus: IceometricsHistoryFocus {
+        IceometricsHistoryFocus(rawValue: focusValue) ?? .league
+    }
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
+    @State private var iceoScrollLink = IceoTimelineScrollLink()
+
+    private let rowHeight: CGFloat = 34
+    private let teamWidth: CGFloat = 82
+    private let dateWidth: CGFloat = 52
 
     private var todayIndex: Int {
         statsTodayColumnIndex(table.columns)
@@ -1308,46 +1565,135 @@ private struct HistoryStatsPanel: View {
         table.columns.indices.map { FrozenGridColumn(id: $0, width: dateWidth) }
     }
 
+    // Always maintain the chronological date table. Only the chart switches
+    // its X-axis to completed-game count; its series are NOT date-fill-forward.
+    private var gameNumberHistory: [String: [Double?]] {
+        var totals = Dictionary(uniqueKeysWithValues: teams.map { ($0.code, 0) })
+        var values = Dictionary(uniqueKeysWithValues: teams.map {
+            ($0.code, [Double?](arrayLiteral: 0.0))
+        })
+
+        let completed = games
+            .filter { $0.gameTypeID == phase.gameTypeID && $0.isFinal }
+            .sorted { ($0.day, $0.id) < ($1.day, $1.id) }
+
+        for game in completed {
+            guard let away = game.awayScore,
+                  let home = game.homeScore,
+                  away != home else { continue }
+
+            for teamCode in [game.awayCode, game.homeCode] {
+                guard values[teamCode] != nil else { continue }
+                let earned: Int
+                if allowNegative {
+                    earned = teamCode == game.awayCode ? away - home : home - away
+                } else {
+                    let won = (teamCode == game.awayCode && away > home)
+                        || (teamCode == game.homeCode && home > away)
+                    earned = won ? 2 : (game.wentToExtraTime ? 1 : 0)
+                }
+                totals[teamCode, default: 0] += earned
+                values[teamCode, default: [0.0]].append(
+                    Double(totals[teamCode, default: 0])
+                )
+            }
+        }
+        return values
+    }
+
+    private var gameColumnCount: Int {
+        max(1, visibleTeams.compactMap {
+            gameNumberHistory[$0.code]?.count
+        }.max() ?? 1)
+    }
+
+    private var gameLabels: [String] {
+        (0..<gameColumnCount).map { index in
+            (index % 5 == 0 || index == gameColumnCount - 1)
+                ? String(index) : ""
+        }
+    }
+
+    private var gameColumnWidth: CGFloat {
+        // Low-game weeks get wider intervals; full seasons remain scrollable.
+        min(64, max(24, 640 / CGFloat(gameColumnCount)))
+    }
+
+    // Focus changes visibility, not all the lines' team colors. An actively
+    // chosen team remains visible even if it lives outside the chosen division.
+    private var chartTeams: [StatsTeam] {
+        let membership = focus.members
+        return visibleTeams.filter { team in
+            (membership?.contains(team.code) ?? true)
+                || team.code == selectedTeamCode
+        }
+    }
+
     private var graphSeries: [TimelineGraphSeries] {
-        visibleTeams.map { team in
-            TimelineGraphSeries(
+        let gameValues = gamesAxis ? gameNumberHistory : [:]
+        let width = gamesAxis ? gameColumnCount : table.columns.count
+        return chartTeams.map { team in
+            let source = gamesAxis
+                ? (gameValues[team.code] ?? [])
+                : (table.rows[team.code] ?? [])
+            let values = gamesAxis && source.count < width
+                ? source + Array(repeating: nil, count: width - source.count)
+                : source
+            return TimelineGraphSeries(
                 id: team.code,
                 color: Color(hex: team.colorHex),
-                values: table.rows[team.code] ?? [],
+                values: values,
                 lineWidth: lineWidth(team),
                 opacity: lineOpacity(team)
             )
         }
     }
+
     private var yDomain: (Double, Double) {
-        let values = visibleTeams.flatMap {
-            (table.rows[$0.code] ?? []).compactMap { $0 }
-        }
-
+        let values = graphSeries.flatMap { $0.values.compactMap { $0 } }
         guard let low = values.min(), let high = values.max() else {
-            return (0, 1)
+            return allowNegative ? (-1, 1) : (0, 1)
         }
-
-        if low == high {
-            return allowNegative
-                ? (low - 1, high + 1)
-                : (max(0, low - 1), high + 1)
+        if allowNegative {
+            let bound = max(1, max(abs(low), abs(high)))
+            return (-bound, bound)
         }
-
-        return (low, high)
+        return (0, max(1, high))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let maximum = max(
+            1.0,
+            visibleTeams
+                .flatMap { table.rows[$0.code] ?? [] }
+                .compactMap { $0 }
+                .map { abs($0) }
+                .max() ?? 0
+        )
+        let rankedTeams = visibleTeams
+        let allValues = rankedTeams.flatMap { table.rows[$0.code] ?? [] }.compactMap { $0 }
+        let maxAbsoluteGD = max(1.0, allValues.map { abs($0) }.max() ?? 1.0)
+        // Precompute once instead of scanning 32 teams for each visible cell.
+        let heatBoundsByColumn: [(low: Double, high: Double)] =
+            table.columns.indices.map { index in
+                if allowNegative { return (low: -maxAbsoluteGD, high: maxAbsoluteGD) }
+                let values = rankedTeams.compactMap {
+                    table.value(teamCode: $0.code, columnIndex: index)
+                }
+                return (low: values.min() ?? 0, high: values.max() ?? 0)
+            }
+
+        return VStack(alignment: .leading, spacing: 10) {
             graph
 
             FrozenDataGrid(
-                rows: visibleTeams,
+                rows: chartTeams,
                 columns: columns,
                 rowHeaderWidth: teamWidth,
                 rowHeight: rowHeight,
                 headerHeight: rowHeight,
-                initialColumnID: todayIndex
+                initialColumnID: todayIndex,
+                linkedHorizontalScroll: iceoScrollLink
             ) {
                 Text("Team")
                     .font(.caption.bold())
@@ -1367,13 +1713,13 @@ private struct HistoryStatsPanel: View {
                 Button {
                     selectedTeamCode = selectedTeamCode == team.code ? nil : team.code
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         StatsTeamLogo(team: team, size: 21)
                         Text(team.code)
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background)
                     .overlay {
@@ -1385,7 +1731,6 @@ private struct HistoryStatsPanel: View {
                 }
                 .buttonStyle(.plain)
             } cell: { team, column in
-                let bounds = columnBounds(column.id)
                 let value = displayValue(
                     teamCode: team.code,
                     columnIndex: column.id
@@ -1393,13 +1738,16 @@ private struct HistoryStatsPanel: View {
 
                 Text(formatHistoryValue(value))
                     .font(.system(.caption2, design: .monospaced).weight(.medium))
+                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(
-                        historyHeatColor(
-                            value: value,
-                            low: bounds.low,
-                            high: bounds.high
-                        )
+                        value == nil
+                            ? Color.clear
+                            : TeamPerformancePalette.cellColor(
+                                teamCode: favoritePaletteTeamCode ?? "",
+                                score: min(max((value ?? 0) / maximum, -1), 1),
+                                scheme: colorScheme
+                            )
                     )
                     .overlay(alignment: .leading) { tableVerticalHairline }
                     .overlay(alignment: .bottom) { tableHorizontalHairline }
@@ -1413,7 +1761,7 @@ private struct HistoryStatsPanel: View {
     }
 
     private var graph: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 if let selectedTeamCode,
                    let selected = visibleTeams.first(where: { $0.code == selectedTeamCode }) {
@@ -1421,34 +1769,39 @@ private struct HistoryStatsPanel: View {
                     Text("\(selected.name) — \(title)")
                         .font(.headline)
                 } else {
-                    Text("All Teams — \(title)")
+                    Text("\(focus.title) — \(title)")
                         .font(.headline)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
                 if selectedTeamCode != nil {
-                    Button("All Teams") {
-                        self.selectedTeamCode = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    Button("Clear Team") { selectedTeamCode = nil }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                 }
             }
 
             AlignedTimelineGraph(
-                labels: table.columns.map(displayHistoryDate),
+                labels: gamesAxis ? gameLabels : table.columns.map(displayHistoryDate),
                 series: graphSeries,
                 leadingWidth: teamWidth,
-                columnWidth: dateWidth,
+                columnWidth: gamesAxis ? gameColumnWidth : dateWidth,
                 yMin: yDomain.0,
                 yMax: yDomain.1,
-                initialColumnIndex: todayIndex,
+                initialColumnIndex: gamesAxis ? gameColumnCount - 1 : todayIndex,
                 height: 250,
-                showXLabels: false
+                showXLabels: gamesAxis
             ) { value in
                 String(Int(value.rounded()))
             }
+            .id(gamesAxis ? "game-axis-\(phase.rawValue)" : "date-axis-\(phase.rawValue)")
+
+            Text(gamesAxis
+                 ? "X-axis: completed games per team. Lines stop at each team's last game; the table below remains calendar-based."
+                 : "X-axis: calendar date. The graph and table share the date timeline.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
         .background(
@@ -1474,15 +1827,14 @@ private struct HistoryStatsPanel: View {
     }
 
     private func lineWidth(_ team: StatsTeam) -> CGFloat {
-        guard let selectedTeamCode else { return 1.6 }
-        return selectedTeamCode == team.code ? 3.6 : 1.0
+        guard let selectedTeamCode else { return 1.7 }
+        return team.code == selectedTeamCode ? 3.8 : 1.3
     }
 
     private func lineOpacity(_ team: StatsTeam) -> Double {
-        guard let selectedTeamCode else { return 0.88 }
-        return selectedTeamCode == team.code ? 1.0 : 0.22
+        guard let selectedTeamCode else { return 0.87 }
+        return team.code == selectedTeamCode ? 1.0 : 0.22
     }
-
     private func carriedValues(for teamCode: String) -> [Double?] {
         guard let raw = table.rows[teamCode] else { return [] }
 
@@ -1506,7 +1858,7 @@ private struct HistoryStatsPanel: View {
     }
 
     private func columnBounds(_ index: Int) -> (low: Double, high: Double) {
-        let values = visibleTeams.compactMap {
+        let values = chartTeams.compactMap {
             displayValue(teamCode: $0.code, columnIndex: index)
         }
         return (values.min() ?? 0, values.max() ?? 0)
@@ -1517,26 +1869,17 @@ private struct HistoryStatsPanel: View {
         high: Double
     ) -> Color {
         guard let value else { return .clear }
-
-        if allowNegative {
-            // Goal differential: zero = neutral gray; positive = blue;
-            // negative = red. A symmetric domain treats +/- N equally.
-            let maximum = max(1.0, max(abs(low), abs(high)))
-            let strength = min(abs(value) / maximum, 1.0)
-            let neutral = (r: 0.48, g: 0.50, b: 0.54)
-            let target = value >= 0
-                ? (r: 0.12, g: 0.41, b: 0.92)
-                : (r: 0.89, g: 0.18, b: 0.27)
-            return Color(
-                red: neutral.r + (target.r - neutral.r) * strength,
-                green: neutral.g + (target.g - neutral.g) * strength,
-                blue: neutral.b + (target.b - neutral.b) * strength
-            ).opacity(0.30)
+        // Zero is neutral in the Points and Goal Differential tables.
+        if abs(value) < 0.0000001 {
+            return StatsPerformancePalette.neutral.opacity(0.22)
         }
-
-        guard high > low else { return Color.accentColor.opacity(0.07) }
-        let rank = (value - low) / (high - low)
-        return Color.accentColor.opacity(0.04 + rank * 0.16)
+        if allowNegative {
+            let extent = max(1.0, abs(low), abs(high))
+            return StatsPerformancePalette.signed(value, extent: extent)
+        }
+        // Positive but tied point totals retain a subtle blue tint.
+        guard high > low else { return StatsPerformancePalette.good.opacity(0.08) }
+        return StatsPerformancePalette.relative((value - low) / (high - low))
     }
 
     private func formatHistoryValue(_ value: Double?) -> String {

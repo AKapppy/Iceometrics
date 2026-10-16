@@ -11,6 +11,7 @@ final class HomeViewModel: ObservableObject {
 
     private let repository: any HockeyRepositoryProtocol
     private let liveScoreService: NHLLiveScoreService
+    private let enableLiveUpdates: Bool
     private var hasLoaded = false
 
     // Keep the full season indexed once. A five-second live refresh should only
@@ -24,10 +25,12 @@ final class HomeViewModel: ObservableObject {
 
     init(
         repository: any HockeyRepositoryProtocol,
-        liveScoreService: NHLLiveScoreService = NHLLiveScoreService()
+        liveScoreService: NHLLiveScoreService = NHLLiveScoreService(),
+        enableLiveUpdates: Bool = true
     ) {
         self.repository = repository
         self.liveScoreService = liveScoreService
+        self.enableLiveUpdates = enableLiveUpdates
     }
 
     var games: [HockeyGame] {
@@ -138,6 +141,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     func refreshLiveGames() async {
+        guard enableLiveUpdates else { return }
         let calendar = Calendar.autoupdatingCurrent
         let today = calendar.startOfDay(for: Date())
 
@@ -222,11 +226,12 @@ final class HomeViewModel: ObservableObject {
                 ? .empty
                 : .loaded
 
-            // Feature snapshots already contain the base season. This center
-            // is only for incremental NHL live overlays.
-            LiveGameUpdateCenter.shared.publish([])
-
-            await refreshLiveGames()
+            // Only the current season participates in the live overlay shared
+            // with Stats. Historical reads must not disturb live subscriptions.
+            if enableLiveUpdates {
+                LiveGameUpdateCenter.shared.publish([])
+                await refreshLiveGames()
+            }
         } catch {
             loadState = .failed(
                 (error as? LocalizedError)?.errorDescription

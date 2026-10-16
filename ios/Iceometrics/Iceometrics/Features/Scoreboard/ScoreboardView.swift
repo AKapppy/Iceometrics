@@ -21,6 +21,9 @@ struct ScoreboardView: View {
     @State private var selectedInitialDate = false
     @State private var moneyPuckPredictions: [String: MoneyPuckGamePrediction] = [:]
     @State private var selectedGame: HockeyGame?
+    @State private var smartFillViewportHeight: CGFloat = 700
+    @AppStorage("iceometrics.scoreboard.smartFill.alpha") private var smartFillEnabled = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private let calendar = Calendar.autoupdatingCurrent
     private let columns = [
@@ -117,8 +120,22 @@ struct ScoreboardView: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     dateHeader
 
+                    HStack {
+                        Spacer(minLength: 0)
+                        Picker("Layout", selection: $smartFillEnabled) {
+                            Text("Standard").tag(false)
+                            Text("Smart Fill").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 280)
+                        .accessibilityLabel("Scoreboard layout")
+                        Spacer(minLength: 0)
+                    }
+
                     if gamesForSelectedDate.isEmpty {
                         emptyState
+                    } else if smartFillEnabled {
+                        smartFillContent
                     } else {
                         ForEach(
                             competitionSections
@@ -174,8 +191,16 @@ struct ScoreboardView: View {
                         }
                     }
                 }
+                .id("\(calendar.startOfDay(for: selectedDate).timeIntervalSince1970)-\(smartFillEnabled)")
                 .padding(.horizontal, 16)
                 .padding(.bottom, 18)
+            }
+            .onGeometryChange(for: CGFloat.self) { geometry in
+                geometry.size.height
+            } action: { viewport in
+                if abs(viewport - smartFillViewportHeight) > 1 {
+                    smartFillViewportHeight = viewport
+                }
             }
             .frame(
                 maxWidth: .infinity,
@@ -261,36 +286,51 @@ struct ScoreboardView: View {
                 availableRange: availableRange
             )
         }
-        .sheet(item: $selectedGame) { game in
-            #if os(iOS)
+        #if os(macOS)
+        .popover(item: $selectedGame, arrowEdge: .trailing) { game in
             NavigationStack {
                 GameDetailView(
                     game: game,
-                    prediction: displayedPrediction(
-                        for: game
-                    ),
+                    prediction: displayedPrediction(for: game),
+                    allGames: viewModel.games
+                )
+            }
+            .frame(width: 760, height: 660)
+        }
+        #else
+        .sheet(item: $selectedGame) { game in
+            NavigationStack {
+                GameDetailView(
+                    game: game,
+                    prediction: displayedPrediction(for: game),
                     allGames: viewModel.games
                 )
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
-            #else
-            NavigationStack {
-                GameDetailView(
-                    game: game,
-                    prediction: displayedPrediction(
-                        for: game
-                    ),
-                    allGames: viewModel.games
-                )
-            }
-            .frame(
-                minWidth: 720,
-                idealWidth: 860,
-                minHeight: 620,
-                idealHeight: 780
+        }
+        #endif
+    }
+
+
+
+    private var smartFillContent: some View {
+        ForEach(competitionSections) { section in
+            IceometricsDocSmartSection(
+                section: section,
+                viewportHeight: smartFillViewportHeight,
+                sectionGameCounts: competitionSections.map { $0.games.count },
+                sectionFavoriteFlags: competitionSections.map { section in
+                    section.games.contains { game in
+                        game.awayTeam.id == settings.favoriteTeamID
+                            || game.homeTeam.id == settings.favoriteTeamID
+                    }
+                },
+                favoriteTeamID: settings.favoriteTeamID,
+                allGames: viewModel.games,
+                onSelect: { game in selectedGame = game },
+                predictionForGame: { game in displayedPrediction(for: game) }
             )
-            #endif
         }
     }
 
@@ -871,6 +911,472 @@ struct ScoreboardView: View {
     }
 }
 
+
+// ICEOMETRICS_SCOREBOARD_SMART_FILL_ALPHA_V1_HELPERS
+// Signals are soft contributions, not binary "important game" rules.
+// Standings proximity is NOT a simulated playoff-odds change.
+private enum ScoreboardSmartFillRanker {
+    struct Ranked: Identifiable {
+        let game: HockeyGame
+        let score: Double
+        let note: String
+        var id: String { game.id }
+    }
+
+    private static let east: Set<String> = [
+        "BOS", "BUF", "CAR", "CBJ", "DET", "FLA", "MTL", "NJD",
+        "NYI", "NYR", "OTT", "PHI", "PIT", "TBL", "TOR", "WSH"
+    ]
+    private static let west: Set<String> = [
+        "ANA", "CHI", "COL", "DAL", "EDM", "LAK", "MIN", "NSH",
+        "SEA", "SJS", "STL", "UTA", "VAN", "VGK", "WPG", "CGY"
+    ]
+
+    static func rank(
+        games: [HockeyGame],
+        favoriteTeamID: String?,
+        standings: [Standing],
+        selectedDate: Date,
+        predictions: [String: MoneyPuckGamePrediction]
+    ) -> [Ranked] {
+        let nhlStandings = standings.filter { $0.team.leagueCode == "NHL" }
+        var lookup: [String: Standing] = [:]
+        for row in nhlStandings {
+            lookup[row.team.abbreviation.uppercased()] = row
+        }
+        let favoriteCode = nhlStandings.first(where: {
+            $0.team.id == favoriteTeamID
+        })?.team.abbreviation.uppercased()
+        let favorite = favoriteCode.flatMap { lookup[$0] }
+        let maxGamesPlayed = nhlStandings.map(\.gamesPlayed).max() ?? 0
+        let seasonMaturity = min(1.0, max(0.0, (Double(maxGamesPlayed) - 30) / 48))
+        // Current standings must never be used to "explain" an old game date.
+        let useCurrentStandings = abs(selectedDate.timeIntervalSince(Date())) < 2 * 86400
+
+        var results: [Ranked] = []
+        results.reserveCapacity(games.count)
+        for game in games {
+            let isFavorite = favoriteTeamID.map {
+                game.awayTeam.id == $0 || game.homeTeam.id == $0
+            } ?? false
+            var score = 0.08
+            var reasons: [(Double, String)] = []
+            if isFavorite {
+                score += 0.62
+                reasons.append((0.62, "Your favorite team"))
+            }
+
+            let drama = liveDrama(game)
+            if game.status == .live {
+                score += 0.16
+                reasons.append((0.16, "Live game"))
+            }
+            score += drama
+            if drama >= 0.12 {
+                reasons.append((drama, "Close game in a decisive stretch"))
+            }
+
+            if game.status == .scheduled,
+               let prediction = predictions[game.id] {
+                let p = min(1.0, max(0.0, prediction.awayWinProbability))
+                let evenness = 1 - abs(p - 0.5) * 2
+                score += 0.05 * evenness
+            }
+
+            if useCurrentStandings,
+               game.leagueCode == "NHL",
+               let favorite,
+               let favoriteCode,
+               !isFavorite,
+               seasonMaturity > 0 {
+                let favoritePct = pointPct(favorite)
+                let codes = [game.awayTeam.abbreviation.uppercased(),
+                             game.homeTeam.abbreviation.uppercased()]
+                let relevances = codes.compactMap { code -> Double? in
+                    guard let other = lookup[code] else { return nil }
+                    let gap = abs(pointPct(other) - favoritePct)
+                    // Compare expected point pace, with softer tails so a
+                    // team 5-10 points away can still affect a playoff race.
+                    let bandwidth = 0.065 + (1 - seasonMaturity) * 0.075
+                    let proximity = exp(-gap / bandwidth)
+                    let sameConference: Bool =
+                        (east.contains(code) && east.contains(favoriteCode)) ||
+                        (west.contains(code) && west.contains(favoriteCode))
+                    return proximity * (sameConference ? 1.0 : 0.20)
+                }
+                if !relevances.isEmpty {
+                    let combined = 1 - relevances.reduce(1.0) {
+                        $0 * (1 - min(1, max(0, $1)))
+                    }
+                    let leverage = 0.76 * seasonMaturity * combined
+                    score += leverage
+                    if leverage >= 0.10 {
+                        reasons.append((leverage, "Nearby in your team's standings race"))
+                    }
+                }
+            }
+
+            if reasons.isEmpty {
+                reasons.append((0, game.status == .scheduled
+                    ? "Upcoming matchup" : "Today's matchup"))
+            }
+            reasons.sort { $0.0 > $1.0 }
+            let note = reasons.prefix(2).map(\.1).joined(separator: " · ")
+            results.append(Ranked(game: game, score: score, note: note))
+        }
+
+        // Rank bands discourage small probability/clock fluctuations from
+        // constantly shuffling live tiles. Within a band, use start time.
+        return results.sorted { left, right in
+            let a = Int((left.score * 10).rounded(.down))
+            let b = Int((right.score * 10).rounded(.down))
+            if a != b { return a > b }
+            if left.game.startTime != right.game.startTime {
+                return left.game.startTime < right.game.startTime
+            }
+            return left.id < right.id
+        }
+    }
+
+    private static func pointPct(_ standing: Standing) -> Double {
+        Double(standing.points) / Double(max(1, standing.gamesPlayed * 2))
+    }
+
+    private static func liveDrama(_ game: HockeyGame) -> Double {
+        guard game.status == .live,
+              let away = game.awayScore,
+              let home = game.homeScore else { return 0 }
+        let margin = abs(away - home)
+        let closeness = exp(-Double(margin) * 0.85)
+        let period = max(1, game.periodNumber ?? 1)
+        let periodType = (game.periodType ?? "").uppercased()
+        let elapsedFraction: Double
+        if periodType == "OT" || periodType == "SO" || period > 3 {
+            elapsedFraction = 1
+        } else if let clock = game.timeRemaining,
+                  let seconds = clockSeconds(clock) {
+            let elapsed = min(1200, max(0, 1200 - seconds))
+            elapsedFraction = min(1, (Double(period - 1) + Double(elapsed) / 1200) / 3)
+        } else {
+            elapsedFraction = min(1, Double(period - 1) / 3)
+        }
+        let lateWeight = elapsedFraction * elapsedFraction
+        let overtimeBonus = (periodType == "OT" || periodType == "SO") ? 0.13 : 0
+        return 0.57 * closeness * lateWeight + overtimeBonus * closeness
+    }
+
+    private static func clockSeconds(_ raw: String) -> Int? {
+        let pieces = raw.split(separator: ":")
+        guard pieces.count == 2,
+              let minutes = Int(pieces[0]),
+              let seconds = Int(pieces[1]), seconds < 60 else { return nil }
+        return minutes * 60 + seconds
+    }
+}
+
+// ICEOMETRICS_SCOREBOARD_SMART_FILL_LAYOUT_V2_TILE
+// Center the game content vertically, avoid duplicate scores beside logos,
+// and scale iconography with card density instead of stretching empty cards.
+// ICEOMETRICS_NOTES_BATCH02_SMART_COMPOSITION_V1
+// Game importance controls layout, but does not add a misleading "featured"
+// label. Width AND height determine the logo size, never width alone.
+// ICEOMETRICS_NOTES_BIGPASS08_SMART_RESPONSIVE
+private struct SmartFillGameTile: View {
+    let item: ScoreboardSmartFillRanker.Ranked
+    let featured: Bool
+    let condensed: Bool
+    let spacious: Bool
+    let prediction: MoneyPuckGamePrediction?
+    @EnvironmentObject private var settings: AppSettingsStore
+
+    private var game: HockeyGame { item.game }
+
+    private var usefulDetail: String? {
+        let reason = item.note
+        if reason.contains("Close game") || reason.contains("standings race") {
+            return reason
+        }
+        return nil
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let availableWidth = max(1, proxy.size.width)
+            let availableHeight = max(1, proxy.size.height)
+            let relativeWidth: CGFloat = condensed ? 0.13 : (featured ? 0.18 : 0.17)
+            let relativeHeight: CGFloat = condensed ? 0.30 : 0.41
+            let logoCap: CGFloat = featured ? 132 : (spacious ? 125 : (condensed ? 48 : 92))
+            let logoSize = min(logoCap, max(24, min(
+                availableWidth * relativeWidth,
+                availableHeight * relativeHeight
+            )))
+            let scoreSize = min(featured ? 56 : (spacious ? 50 : 42),
+                                max(19, min(availableWidth * 0.110,
+                                            availableHeight * 0.27)))
+            let metricSize: CGFloat = condensed ? 9 : min(16, max(10, availableHeight * 0.045))
+
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    cornerProbability(isAway: true, metricSize: metricSize)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if game.status != .scheduled {
+                        Text(statusText)
+                            .font(.caption2.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+
+                    cornerProbability(isAway: false, metricSize: metricSize)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                Spacer(minLength: condensed ? 2 : 5)
+
+                HStack(alignment: .center, spacing: condensed ? 3 : 8) {
+                    teamColumn(game.awayTeam, isAway: true,
+                               logoSize: logoSize, metricSize: metricSize)
+                    Spacer(minLength: 0)
+                    VStack(spacing: 4) {
+                        if game.status == .live || game.status == .final {
+                            Text("\(game.awayScore ?? 0) – \(game.homeScore ?? 0)")
+                                .font(.system(size: scoreSize,
+                                              weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.60)
+                        } else if game.status == .scheduled {
+                            Text("@")
+                                .font(.system(size: max(16, scoreSize * 0.65),
+                                              weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            Text(game.startTime.formatted(date: .omitted, time: .shortened))
+                                .font(.system(size: max(condensed ? 17 : 21, scoreSize * 0.72),
+                                              weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+                        } else {
+                            Text("@")
+                                .font(.system(size: max(15, scoreSize * 0.55),
+                                              weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(minWidth: condensed ? 52 : 70)
+                    Spacer(minLength: 0)
+                    teamColumn(game.homeTeam, isAway: false,
+                               logoSize: logoSize, metricSize: metricSize)
+                }
+                .frame(maxWidth: .infinity)
+
+                Spacer(minLength: condensed ? 2 : 5)
+
+                // Venue stays visible whenever the card is tall enough.
+                if let venue = game.venue,
+                   !venue.isEmpty,
+                   availableHeight >= 195,
+                   !condensed {
+                    Label(venue, systemImage: "mappin.and.ellipse")
+                        .font(.system(size: min(14, max(10, availableHeight * 0.047))))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 4)
+                }
+
+                if let usefulDetail, !condensed {
+                    Text(usefulDetail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(condensed ? 9 : (featured || spacious ? 15 : 12))
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.thinMaterial)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(featured ? 0.17 : 0.09), lineWidth: 1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func cornerProbability(
+        isAway: Bool,
+        metricSize: CGFloat
+    ) -> some View {
+        let value = isAway ? prediction?.awayWinProbability : prediction?.homeWinProbability
+        if (game.status == .scheduled || game.status == .live),
+           let value {
+            Text(value, format: .percent.precision(.fractionLength(1)))
+                .font(.system(size: max(metricSize, 11), weight: .semibold,
+                              design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        } else {
+            Text(" ")
+                .font(.system(size: max(metricSize, 11)))
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func teamColumn(
+        _ team: Team,
+        isAway: Bool,
+        logoSize: CGFloat,
+        metricSize: CGFloat
+    ) -> some View {
+        let shots = isAway ? game.awayShots : game.homeShots
+
+        return VStack(spacing: 2) {
+            ZStack(alignment: .topTrailing) {
+                TeamLogoView(team: team, size: logoSize)
+                if team.id == settings.favoriteTeamID {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: max(9, logoSize * 0.22)))
+                        .foregroundStyle(Color.accentColor)
+                        .offset(x: 3, y: -3)
+                        .accessibilityLabel("Favorite team")
+                }
+            }
+
+            Text(team.abbreviation)
+                .font(.system(size: max(10, metricSize + 2),
+                              weight: .semibold, design: .rounded))
+                .lineLimit(1)
+
+            if (game.status == .live || game.status == .final),
+               let shots {
+                Text("\(shots) SOG")
+                    .font(.system(size: metricSize, weight: .medium,
+                                  design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var statusText: String {
+        switch game.status {
+        case .scheduled:
+            return game.startTime.formatted(date: .omitted, time: .shortened)
+        case .live:
+            let period = game.periodType?.uppercased() ?? ""
+            let label = (period == "OT" || period == "SO")
+                ? period : "P\(game.periodNumber ?? 1)"
+            if let clock = game.timeRemaining, !clock.isEmpty {
+                return "LIVE · \(label) · \(clock)"
+            }
+            return "LIVE · \(label)"
+        case .final: return "FINAL"
+        case .postponed: return "POSTPONED"
+        case .unknown: return "STATUS PENDING"
+        }
+    }
+}
+
+
+private struct ScoreboardSmartFillSection: View {
+    let section: ScoreboardCompetitionSection
+    let onSelect: (HockeyGame) -> Void
+    let predictionForGame: (HockeyGame) -> MoneyPuckGamePrediction?
+
+    @State private var availableWidth: CGFloat = 320
+
+    private var columnsPerRow: Int {
+        let gameCount = max(1, section.games.count)
+
+        let maxColumns = max(
+            1,
+            Int((availableWidth + 16) / 316)
+        )
+
+        let rowCount = max(
+            1,
+            (gameCount + maxColumns - 1) / maxColumns
+        )
+
+        return max(
+            1,
+            (gameCount + rowCount - 1) / rowCount
+        )
+    }
+
+    private var numberOfRows: Int {
+        (section.games.count + columnsPerRow - 1)
+            / columnsPerRow
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(section.title)
+                    .font(.headline)
+
+                Spacer()
+
+                Text(section.gameCountText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVStack(spacing: 16) {
+                ForEach(0..<numberOfRows, id: \.self) { row in
+                    let start = row * columnsPerRow
+                    let end = min(
+                        start + columnsPerRow,
+                        section.games.count
+                    )
+
+                    HStack(alignment: .top, spacing: 16) {
+                        ForEach(start..<end, id: \.self) { index in
+                            let game = section.games[index]
+
+                            Button {
+                                onSelect(game)
+                            } label: {
+                                ScoreboardCardView(
+                                    game: game,
+                                    prediction: predictionForGame(game)
+                                )
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity)
+                            .accessibilityHint(
+                                "Open game details"
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { width in
+            if abs(width - availableWidth) > 1 {
+                availableWidth = width
+            }
+        }
+    }
+}
+
 private extension View {
     @ViewBuilder
     func scoreboardDateSwipe(
@@ -928,3 +1434,408 @@ private struct ScoreboardCalendarPicker: View {
         .padding()
     }
 }
+
+
+// ICEOMETRICS_UNIFIED_SMART_20261016_V1
+// One responsive Smart Fill layout for iPhone, iPad and Mac. Game relevance
+// changes weights; actual measured width decides columns. No device forks.
+private struct IceometricsDocSmartSection: View {
+    let section: ScoreboardCompetitionSection
+    let viewportHeight: CGFloat
+    let sectionGameCounts: [Int]
+    let sectionFavoriteFlags: [Bool]
+    let favoriteTeamID: String?
+    let allGames: [HockeyGame]
+    let onSelect: (HockeyGame) -> Void
+    let predictionForGame: (HockeyGame) -> MoneyPuckGamePrediction?
+
+    @State private var availableWidth: CGFloat = 740
+    private let gap: CGFloat = 12
+
+    // A readable cell is never narrower than this, including on iPhone.
+    private var maxColumns: Int {
+        max(1, Int((max(1, availableWidth) + gap) / (184 + gap)))
+    }
+
+    private var favoriteCode: String? {
+        guard let favoriteTeamID else { return nil }
+        // Usually the preference is already an NHL abbreviation. Avoid
+        // scanning the entire schedule on every live-score refresh.
+        let known = Set([
+            "BOS", "BUF", "DET", "FLA", "MTL", "OTT", "TBL", "TOR",
+            "CAR", "CBJ", "NJD", "NYI", "NYR", "PHI", "PIT", "WSH",
+            "CHI", "COL", "DAL", "MIN", "NSH", "STL", "UTA", "WPG",
+            "ANA", "CGY", "EDM", "LAK", "SJS", "SEA", "VAN", "VGK"
+        ])
+        let direct = favoriteTeamID.uppercased()
+        if known.contains(direct) { return direct }
+        let favorite = allGames.lazy.compactMap { game -> Team? in
+            if game.awayTeam.id == favoriteTeamID { return game.awayTeam }
+            if game.homeTeam.id == favoriteTeamID { return game.homeTeam }
+            return nil
+        }.first
+        return favorite?.abbreviation.uppercased()
+    }
+
+    private var divisionCodes: Set<String> {
+        guard let favoriteCode else { return [] }
+        let divisions: [[String]] = [
+            ["BOS", "BUF", "DET", "FLA", "MTL", "OTT", "TBL", "TOR"],
+            ["CAR", "CBJ", "NJD", "NYI", "NYR", "PHI", "PIT", "WSH"],
+            ["CHI", "COL", "DAL", "MIN", "NSH", "STL", "UTA", "WPG"],
+            ["ANA", "CGY", "EDM", "LAK", "SJS", "SEA", "VAN", "VGK"]
+        ]
+        return Set(divisions.first(where: { $0.contains(favoriteCode) }) ?? [])
+    }
+
+    private func isFavorite(_ game: HockeyGame) -> Bool {
+        guard let favoriteTeamID else { return false }
+        return game.awayTeam.id == favoriteTeamID || game.homeTeam.id == favoriteTeamID
+    }
+
+    private func lateClose(_ game: HockeyGame) -> Bool {
+        guard let away = game.awayScore, let home = game.homeScore,
+              abs(away - home) <= 1 else { return false }
+        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3)
+    }
+
+    private func overtime(_ game: HockeyGame) -> Bool {
+        guard game.status == .live || game.status == .final else { return false }
+        let period = game.periodType?.uppercased() ?? ""
+        return period == "OT" || period == "SO" || (game.periodNumber ?? 0) >= 4
+    }
+
+    private func rank(_ game: HockeyGame, rivals: Set<String>) -> Int {
+        var rank = 0
+        if isFavorite(game) { rank += 100 }
+        if !rivals.isEmpty {
+            if rivals.contains(game.awayTeam.abbreviation.uppercased()) { rank += 22 }
+            if rivals.contains(game.homeTeam.abbreviation.uppercased()) { rank += 22 }
+        }
+        if overtime(game) { rank += 48 }
+        else if lateClose(game) { rank += 38 }
+        return rank
+    }
+
+    private var orderedGames: [HockeyGame] {
+        let rivals = divisionCodes
+        return section.games.enumerated().sorted { lhs, rhs in
+            let a = rank(lhs.element, rivals: rivals)
+            let b = rank(rhs.element, rivals: rivals)
+            if a != b { return a > b }
+            if lhs.element.startTime != rhs.element.startTime {
+                return lhs.element.startTime < rhs.element.startTime
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    // Balanced row counts avoid a lonely card consuming an entire last row.
+    private func rowIndices(_ row: Int, gameCount: Int, rows: Int) -> Range<Int> {
+        let base = gameCount / rows
+        let extras = gameCount % rows
+        let start = row * base + min(row, extras)
+        return start..<(start + base + (row < extras ? 1 : 0))
+    }
+
+    // All competitions share the same viewport-height budget and column rule.
+    private var totalRows: Int {
+        max(1, sectionGameCounts.reduce(0) { total, count in
+            total + (count + maxColumns - 1) / maxColumns
+        })
+    }
+
+    private var cardHeight: CGFloat {
+        let headings = CGFloat(sectionGameCounts.count) * 45
+        let gaps = CGFloat(max(0, totalRows - 1)) * gap
+        let budget = (viewportHeight - 129 - headings - gaps) / CGFloat(totalRows)
+        // Sparse slates grow; crowded schedules scroll instead of crushing text.
+        return max(126, min(550, budget))
+    }
+
+    private func weight(_ game: HockeyGame, rivals: Set<String>) -> CGFloat {
+        let numberOfGames = sectionGameCounts.reduce(0, +)
+        let crowding = min(1.0, CGFloat(max(0, numberOfGames - 2)) / 12.0)
+        var value: CGFloat = 1
+        if isFavorite(game) { value += 0.42 * (1 - crowding * 0.60) }
+        if !isFavorite(game)
+            && (rivals.contains(game.awayTeam.abbreviation.uppercased())
+                || rivals.contains(game.homeTeam.abbreviation.uppercased())) {
+            value += 0.18 * (1 - crowding * 0.55)
+        }
+        if overtime(game) || lateClose(game) { value += 0.22 * (1 - crowding * 0.45) }
+        return min(1.75, value)
+    }
+
+    // Only facts available in the loaded schedule are shown. Missing prior games
+    // are not counted as losses or assumed to exist.
+    private func seasonSeries(for game: HockeyGame) -> String? {
+        guard game.leagueCode == "NHL", game.gameTypeId != 1 else { return nil }
+        let calendar = Calendar(identifier: .gregorian)
+        let date = calendar.dateComponents([.year, .month], from: game.startTime)
+        let seasonYear = (date.month ?? 10) >= 7 ? (date.year ?? 2026) : (date.year ?? 2026) - 1
+        let seasonStart = calendar.date(from: DateComponents(year: seasonYear, month: 7, day: 1))
+            ?? game.startTime
+        var awayWins = 0
+        var homeWins = 0
+        for past in allGames where past.id != game.id && past.status == .final
+            && past.gameTypeId == 2 && past.startTime >= seasonStart
+            && past.startTime < game.startTime {
+            let samePair = (past.awayTeam.id == game.awayTeam.id && past.homeTeam.id == game.homeTeam.id)
+                || (past.awayTeam.id == game.homeTeam.id && past.homeTeam.id == game.awayTeam.id)
+            guard samePair, let a = past.awayScore, let h = past.homeScore, a != h else { continue }
+            let winner = a > h ? past.awayTeam.id : past.homeTeam.id
+            if winner == game.awayTeam.id { awayWins += 1 } else { homeWins += 1 }
+        }
+        guard awayWins + homeWins > 0 else { return nil }
+        return "Loaded season series · \(game.awayTeam.abbreviation) \(awayWins)–\(homeWins) \(game.homeTeam.abbreviation)"
+    }
+
+    var body: some View {
+        let rivals = divisionCodes
+        let sorted = orderedGames
+        let rows = max(1, (sorted.count + maxColumns - 1) / maxColumns)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(section.title).font(.headline)
+                Spacer(minLength: 0)
+                Text(section.gameCountText)
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+
+            LazyVStack(spacing: gap) {
+                ForEach(0..<rows, id: \.self) { row in
+                    let indices = Array(rowIndices(row, gameCount: sorted.count, rows: rows))
+                    let rowGames = indices.map { sorted[$0] }
+                    let totalWeight = rowGames.reduce(CGFloat.zero) { $0 + weight($1, rivals: rivals) }
+                    let usableWidth = max(1, availableWidth - CGFloat(max(0, rowGames.count - 1)) * gap)
+                    HStack(alignment: .top, spacing: gap) {
+                        ForEach(rowGames) { game in
+                            Button { onSelect(game) } label: {
+                                IceometricsDocSmartCard(
+                                    game: game,
+                                    prediction: predictionForGame(game),
+                                    cardHeight: cardHeight,
+                                    seasonSeriesText: cardHeight >= 295 ? seasonSeries(for: game) : nil,
+                                    emphasis: isFavorite(game) ? .favorite :
+                                        (overtime(game) || lateClose(game) ? .close :
+                                            (rivals.contains(game.awayTeam.abbreviation.uppercased())
+                                             || rivals.contains(game.homeTeam.abbreviation.uppercased())
+                                             ? .rival : .normal)),
+                                    loadRichDetail: sectionGameCounts.reduce(0, +) <= 4
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: usableWidth * weight(game, rivals: rivals) / max(0.01, totalWeight))
+                            .accessibilityHint("Open game details")
+                        }
+                    }
+                    .frame(width: availableWidth, alignment: .leading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { width in
+            if abs(width - availableWidth) > 1 { availableWidth = width }
+        }
+    }
+}
+
+private enum IceometricsSmartEmphasis {
+    case normal, rival, close, favorite
+}
+
+private struct IceometricsDocSmartCard: View {
+    let game: HockeyGame
+    let prediction: MoneyPuckGamePrediction?
+    let cardHeight: CGFloat
+    let seasonSeriesText: String?
+    let emphasis: IceometricsSmartEmphasis
+    let loadRichDetail: Bool
+
+    @State private var expandedDetail: NHLGameDetail?
+
+    private var showPrediction: Bool {
+        game.status == .scheduled || game.status == .live
+    }
+
+    private var isOvertime: Bool {
+        let type = game.periodType?.uppercased() ?? ""
+        return (game.status == .live || game.status == .final)
+            && (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
+    }
+
+    private var isClose: Bool {
+        guard let a = game.awayScore, let h = game.homeScore else { return false }
+        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3) && abs(a - h) <= 1
+    }
+
+    private var accent: Color {
+        switch emphasis {
+        case .favorite: .accentColor
+        case .rival: .blue
+        case .close: .orange
+        case .normal: .clear
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let compact = cardHeight < 205 || width < 230
+            let logoSize = min(176, max(30, min(width * 0.28, cardHeight * 0.32)))
+            let scoreSize = min(82, max(18, min(width * 0.15, cardHeight * 0.23)))
+            let supportingSize = min(21, max(10, min(width * 0.051, cardHeight * 0.055)))
+            let expanded = cardHeight >= 295 && width >= 265
+
+            VStack(spacing: compact ? 4 : 11) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if showPrediction, let probability = prediction?.awayWinProbability {
+                        Text(probability, format: .percent.precision(.fractionLength(1)))
+                            .font(.system(size: supportingSize, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                    Spacer(minLength: 0)
+                    if emphasis == .favorite && width >= 210 {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.tint)
+                            .font(.system(size: supportingSize * 0.85))
+                            .accessibilityLabel("Favorite team")
+                    } else if (isOvertime || isClose) && width >= 210 {
+                        Text(isOvertime ? "OT / SO" : "CLOSE GAME")
+                            .font(.system(size: max(10, supportingSize * 0.75), weight: .bold))
+                            .foregroundStyle(.orange)
+                    }
+                    Spacer(minLength: 0)
+                    if showPrediction, let probability = prediction?.homeWinProbability {
+                        Text(probability, format: .percent.precision(.fractionLength(1)))
+                            .font(.system(size: supportingSize, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+                HStack(spacing: 5) {
+                    teamColumn(game.awayTeam, shots: game.awayShots, logoSize: logoSize,
+                               supportingSize: supportingSize)
+                    Spacer(minLength: 0)
+                    VStack(spacing: 3) {
+                        Text(scoreText)
+                            .font(.system(size: scoreSize, weight: .heavy, design: .rounded))
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.55)
+                        Text(statusText)
+                            .font(.system(size: supportingSize, weight: .bold))
+                            .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    Spacer(minLength: 0)
+                    teamColumn(game.homeTeam, shots: game.homeShots, logoSize: logoSize,
+                               supportingSize: supportingSize)
+                }
+                Spacer(minLength: 0)
+
+                if game.status == .live, game.isIntermission != true,
+                   let situation = expandedDetail?.specialTeams.state,
+                   situation.contains("Power Play") {
+                    Label(situation, systemImage: "bolt.fill")
+                        .font(.system(size: max(11, supportingSize * 0.8), weight: .semibold))
+                        .foregroundStyle(.orange).lineLimit(1)
+                }
+
+                if expanded {
+                    if game.status == .scheduled, let detail = expandedDetail {
+                        let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
+                        let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
+                        if let awayLeader, let homeLeader {
+                            Text("NHL leaders · \(game.awayTeam.abbreviation): \(awayLeader)  ·  \(game.homeTeam.abbreviation): \(homeLeader)")
+                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.65)
+                        }
+                    }
+                    if game.status == .live || game.status == .final {
+                        if let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
+                            let latest = scorers.suffix(2)
+                            Text("Goals · " + latest.map { "\($0.team) \($0.player)" }.joined(separator: " · "))
+                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                                .lineLimit(2).minimumScaleFactor(0.7)
+                        }
+                    }
+                    if let seasonSeriesText {
+                        Text(seasonSeriesText)
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                    }
+                }
+
+                Label(
+                    game.venue?.isEmpty == false ? (game.venue ?? "") : "Venue TBD",
+                    systemImage: "mappin.and.ellipse"
+                )
+                .font(.system(size: max(10, supportingSize * 0.8)))
+                .foregroundStyle(.secondary)
+                .lineLimit(1).frame(maxWidth: .infinity, alignment: .center)
+            }
+            .padding(.horizontal, compact ? 9 : 16)
+            .padding(.vertical, compact ? 8 : 13)
+            .frame(width: width, height: geometry.size.height)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(accent.opacity(emphasis == .normal ? 0 : 0.80),
+                            lineWidth: emphasis == .normal ? 0 : 2)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(.quaternary, lineWidth: 1)
+            }
+            .task(id: "\(game.id)-\(game.status)-\(expanded)-\(loadRichDetail)") {
+                guard expanded, loadRichDetail, game.leagueCode == "NHL" else {
+                    expandedDetail = nil
+                    return
+                }
+                // Max four large cards can request extra NHL data. The current
+                // scoreboard source retains its normal live-score polling.
+                expandedDetail = try? await NHLGameDetailService().fetchDetail(for: game)
+            }
+        }
+        .frame(height: cardHeight)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func teamColumn(_ team: Team, shots: Int?, logoSize: CGFloat,
+                            supportingSize: CGFloat) -> some View {
+        VStack(spacing: 3) {
+            TeamLogoView(team: team, size: logoSize)
+            if game.status == .live || game.status == .final {
+                Text("SOG \(shots.map(String.init) ?? "–")")
+                    .font(.system(size: supportingSize, weight: .medium))
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var scoreText: String {
+        switch game.status {
+        case .scheduled, .unknown, .postponed: return "@"
+        case .live, .final:
+            return "\(game.awayScore.map(String.init) ?? "–") – \(game.homeScore.map(String.init) ?? "–")"
+        }
+    }
+
+    private var statusText: String {
+        switch game.status {
+        case .scheduled, .unknown:
+            return game.startTime.formatted(date: .omitted, time: .shortened)
+        case .live:
+            return game.timeRemaining.map { "LIVE · " + $0 } ?? "LIVE"
+        case .final:
+            return isOvertime ? "FINAL · OT/SO" : "FINAL"
+        case .postponed: return "PPD"
+        }
+    }
+}
+

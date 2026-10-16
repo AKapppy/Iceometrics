@@ -1,9 +1,10 @@
 import Foundation
 
 nonisolated enum AppEnvironment {
-    static func makeRepository() -> any HockeyRepositoryProtocol {
+    static func makeRepository(season requestedSeason: String? = nil) -> any HockeyRepositoryProtocol {
         let cache = CacheStore(
-            filename: AppConfiguration.cacheFilename
+            filename: requestedSeason.map { "iceometrics-shared-scoreboard-\($0).json" }
+                ?? AppConfiguration.cacheFilename
         )
 
         switch AppConfiguration.dataMode {
@@ -18,7 +19,7 @@ nonisolated enum AppEnvironment {
             return HockeyRepository(
                 service: SharedWebHockeyDataService(
                     baseURL: baseURL,
-                    season: season
+                    season: requestedSeason ?? season
                 ),
                 cache: cache,
                 successfulFetchOrigin: .network

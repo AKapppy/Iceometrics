@@ -11,16 +11,28 @@ actor SharedSeasonExportDataStore {
     private var memoryKey: String?
     private var lastNetworkFetchAt: Date?
     private var inFlightTask: Task<Data, Error>?
+    private var inFlightKey: String?
 
     /// Reuse a just-fetched network payload when several tabs open together.
     private let networkReuseInterval: TimeInterval = 60
 
     private init() {}
 
+    // Historical season snapshots are bundled with the app to avoid any
+    // GitHub publishing requirement. Current-season data stays network-driven.
+    private func localHistoricalData(for season: String) -> Data? {
+        guard season != "2026-2027", season >= "2019-2020", season <= "2025-2026" else { return nil }
+        let file = Bundle.main.url(forResource: season, withExtension: "json")
+            ?? Bundle.main.url(forResource: season, withExtension: "json", subdirectory: "SeasonArchives")
+        guard let file else { return nil }
+        return try? Data(contentsOf: file)
+    }
+
     func cachedData(
         baseURL: URL,
         season: String
     ) -> Data? {
+        if let historical = localHistoricalData(for: season) { return historical }
         let key = cacheKey(baseURL: baseURL, season: season)
         if memoryKey == key, let memoryData {
             return memoryData
@@ -42,6 +54,7 @@ actor SharedSeasonExportDataStore {
         client: APIClient,
         forceRefresh: Bool
     ) async throws -> Data {
+        if let historical = localHistoricalData(for: season) { return historical }
         let key = cacheKey(baseURL: baseURL, season: season)
 
         if !forceRefresh,
@@ -52,7 +65,7 @@ actor SharedSeasonExportDataStore {
             return memoryData
         }
 
-        if !forceRefresh, let inFlightTask {
+        if !forceRefresh, inFlightKey == key, let inFlightTask {
             return try await inFlightTask.value
         }
 
@@ -73,12 +86,14 @@ actor SharedSeasonExportDataStore {
 
         if !forceRefresh {
             inFlightTask = task
+            inFlightKey = key
         }
 
         do {
             let data = try await task.value
-            if !forceRefresh {
+            if !forceRefresh, inFlightKey == key {
                 inFlightTask = nil
+                inFlightKey = nil
             }
             memoryKey = key
             memoryData = data
@@ -86,8 +101,9 @@ actor SharedSeasonExportDataStore {
             persist(data, key: key)
             return data
         } catch {
-            if !forceRefresh {
+            if !forceRefresh, inFlightKey == key {
                 inFlightTask = nil
+                inFlightKey = nil
             }
             throw error
         }

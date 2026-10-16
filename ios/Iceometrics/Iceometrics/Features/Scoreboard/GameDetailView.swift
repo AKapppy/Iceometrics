@@ -13,10 +13,27 @@ struct GameDetailView: View {
 
     private let missing = NHLGameDetailService.missingText
 
+    // Keep Back at the leading edge of the popup, not with primary actions.
+    private var gameDetailsBackPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        .navigation
+        #else
+        .topBarLeading
+        #endif
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
                 scoreHeader
+                if let detail,
+                   game.status == .live,
+                   game.isIntermission != true,
+                   let situation = detail.specialTeams.state,
+                   situation.contains("Power Play") {
+                    lastReportedSpecialTeamsBadge(situation)
+                }
+
 
                 if isLoading {
                     ProgressView("Loading game information…")
@@ -78,18 +95,21 @@ struct GameDetailView: View {
             .padding(20)
         }
         .navigationTitle("")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+        // ICEOMETRICS_UNIFIED_SMART_20261016_V1_VISIBLE_BACK
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
                 Button {
                     dismiss()
                 } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left")
-                        Text("Back")
-                    }
+                    Label("Back", systemImage: "chevron.left")
                 }
                 .accessibilityLabel("Back")
+                .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
         .task {
             await loadDetail()
@@ -120,6 +140,18 @@ struct GameDetailView: View {
                     score: game.homeScore,
                     probability: prediction?.homeWinProbability
                 )
+            }
+
+            if game.status == .live,
+               let state = detail?.specialTeams.state,
+               state.contains("Power Play") {
+                Label(state, systemImage: "bolt.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.orange.opacity(0.10), in: Capsule())
+                    .accessibilityLabel(state)
             }
 
             HStack(spacing: 12) {
@@ -180,6 +212,22 @@ struct GameDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private func lastReportedSpecialTeamsBadge(_ situation: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.fill")
+                .foregroundStyle(.orange)
+            Text(situation)
+                .font(.subheadline.weight(.semibold))
+            Spacer(minLength: 0)
+            Text("Last reported")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private func goaliesSection(_ detail: NHLGameDetail) -> some View {
         detailCard(title: "Goalies") {
             twoTeamHeader
@@ -193,58 +241,88 @@ struct GameDetailView: View {
         }
     }
 
+    // ICEOMETRICS_NOTES_BIGPASS08_GOAL_COLUMNS
     private func goalScorersSection(_ detail: NHLGameDetail) -> some View {
-        detailCard(title: "Goal Scorers") {
+        let awayGoals = detail.goalScorers.filter {
+            $0.team == game.awayTeam.abbreviation
+        }
+        let homeGoals = detail.goalScorers.filter {
+            $0.team == game.homeTeam.abbreviation
+        }
+
+        return detailCard(title: "Goal Scorers") {
             if detail.goalScorers.isEmpty {
                 emptySemanticRow("No goals")
             } else {
-                VStack(spacing: 0) {
-                    ForEach(
-                        Array(detail.goalScorers.enumerated()),
-                        id: \.element.id
-                    ) { index, row in
-                        if index > 0 {
-                            Divider()
-                        }
+                // Each team's scoring list has its own length: don't introduce
+                // empty goal rows merely to align unrelated events.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        goalScorerColumn(team: game.awayTeam.abbreviation,
+                                         goals: awayGoals)
+                        goalScorerColumn(team: game.homeTeam.abbreviation,
+                                         goals: homeGoals)
+                    }
+                    .frame(minWidth: 580)
 
-                        HStack(
-                            alignment: .firstTextBaseline,
-                            spacing: 10
-                        ) {
-                            Text(
-                                row.team == game.awayTeam.abbreviation
-                                    ? row.player
-                                    : ""
-                            )
-                            .frame(
-                                maxWidth: .infinity,
-                                alignment: .trailing
-                            )
-                            .multilineTextAlignment(.trailing)
-
-                            Text("\(row.period) · \(row.time)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                                .frame(width: 90)
-
-                            Text(
-                                row.team == game.homeTeam.abbreviation
-                                    ? row.player
-                                    : ""
-                            )
-                            .frame(
-                                maxWidth: .infinity,
-                                alignment: .leading
-                            )
-                            .multilineTextAlignment(.leading)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
+                    VStack(alignment: .leading, spacing: 14) {
+                        goalScorerColumn(team: game.awayTeam.abbreviation,
+                                         goals: awayGoals)
+                        goalScorerColumn(team: game.homeTeam.abbreviation,
+                                         goals: homeGoals)
                     }
                 }
             }
         }
+    }
+
+    private func goalScorerColumn(
+        team: String,
+        goals: [NHLGoalScorer]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(team)
+                .font(.subheadline.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.055))
+
+            if goals.isEmpty {
+                Text("No goals")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+            }
+
+            ForEach(goals) { goal in
+                Divider()
+                HStack(alignment: .center, spacing: 10) {
+                    Text("\(goal.period) · \(goal.time)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 78, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(goal.player)
+                            .font(.subheadline.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !goal.assists.isEmpty {
+                            Text(goal.assists.joined(separator: ", "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.thinMaterial,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func shotsSection(_ detail: NHLGameDetail) -> some View {
@@ -533,6 +611,10 @@ struct GameDetailView: View {
 
     private func goalieText(_ slot: NHLGoalieSlot?) -> String {
         guard let slot else {
+            return missing
+        }
+
+        if slot.label == "Predicted" {
             return missing
         }
 

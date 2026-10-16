@@ -13,6 +13,15 @@ struct IceometicsApp: App {
         WindowGroup {
             RootView(homeViewModel: homeViewModel)
                 .environmentObject(settings)
+                .environment(
+                    \.iceometricsFavoritePaletteTeamCode,
+                    settings.favoritePaletteTeamCode(
+                        for: homeViewModel.accentTeams
+                    )
+                )
+                .environment(\.iceometricsAccentForegroundColor,
+                    settings.accentForegroundColor(for: homeViewModel.accentTeams)
+                )
                 .tint(
                     settings.accentColor(
                         for: homeViewModel.accentTeams
