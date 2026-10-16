@@ -623,9 +623,11 @@ private struct PredictionSpreadsheet: View {
             .frame(width: 0.5)
     }
 
-    // The table and the right pane scroll together vertically. Bars are not a
-    // separate scroll view: their rows always match the team rows.
-    @State private var tableVerticalOffset: CGFloat = 0
+    // Bidirectional scroll coordination: users can scroll either the bars
+    // or the table and the matching rows stay aligned.
+    @State private var verticalScrollLink = IceoVerticalScrollLink()
+    @State private var barScrollPosition = ScrollPosition()
+    @State private var barScrollSender = UUID()
     private let latestPaneWidth: CGFloat = 235
 
     // ICEOMETRICS_DOC_REMAINING_20261015_V1_PREDICTIONS
@@ -646,8 +648,8 @@ private struct PredictionSpreadsheet: View {
             .background(Color.primary.opacity(0.055))
             .overlay(alignment: .bottom) { gridHorizontalHairline }
 
-            GeometryReader { _ in
-                VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
                     ForEach(teams) { team in
                         let value = table.value(
                             teamCode: team.code,
@@ -685,9 +687,17 @@ private struct PredictionSpreadsheet: View {
                         .overlay(alignment: .bottom) { gridHorizontalHairline }
                     }
                 }
-                .offset(y: -tableVerticalOffset)
             }
-            .clipped()
+            .scrollPosition($barScrollPosition)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                max(0, geometry.contentOffset.y)
+            } action: { _, y in
+                verticalScrollLink.report(y, sender: barScrollSender)
+            }
+            .onReceive(verticalScrollLink.events) { event in
+                guard event.sender != barScrollSender else { return }
+                barScrollPosition.scrollTo(y: event.y)
+            }
         }
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1)
@@ -715,11 +725,7 @@ private struct PredictionSpreadsheet: View {
                 headerHeight: rowHeight,
                 initialColumnID: focusColumnIndex,
                 linkedHorizontalScroll: linkedHorizontalScroll,
-                onVerticalScroll: { next in
-                    if abs(next - tableVerticalOffset) > 0.75 {
-                        tableVerticalOffset = next
-                    }
-                }
+                linkedVerticalScroll: verticalScrollLink
             ) {
                 Text("Team")
                     .font(.caption.weight(.bold))
