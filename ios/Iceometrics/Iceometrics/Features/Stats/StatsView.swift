@@ -1125,6 +1125,11 @@ private struct PlayerCategoryPanel: View {
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 10) {
+                                if topPlayers(for: stat, limit: 5).isEmpty {
+                                    Text("Not reported by NHL")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 ForEach(topPlayers(for: stat, limit: 5)) { player in
                                     if player.value(stat) == 0 {
                                         IceometricsZeroPlayerCard()
@@ -1141,6 +1146,12 @@ private struct PlayerCategoryPanel: View {
                 }
             } else {
                 LazyVStack(spacing: 0) {
+                    if topPlayers(for: selectedStat, limit: 25).isEmpty {
+                        Text("No reported NHL leaders for this filter.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 18)
+                    }
                     ForEach(topPlayers(for: selectedStat, limit: 25)) { player in
                         if player.value(selectedStat) == 0 {
                             IceometricsZeroPlayerRow()
@@ -1160,12 +1171,15 @@ private struct PlayerCategoryPanel: View {
 
     private func topPlayers(for stat: String, limit: Int) -> [PlayerStatLine] {
         Array(
-            players.sorted {
-                if $0.value(stat) == $1.value(stat) {
-                    return $0.name < $1.name
+            players
+                .filter { $0.values[stat]?.isFinite == true }
+                .sorted {
+                    if $0.value(stat) == $1.value(stat) {
+                        return $0.name < $1.name
+                    }
+                    return $0.value(stat) > $1.value(stat)
                 }
-                return $0.value(stat) > $1.value(stat)
-            }.prefix(limit)
+                .prefix(limit)
         )
     }
 }
