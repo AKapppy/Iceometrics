@@ -171,14 +171,26 @@ struct FrozenDataGrid<
                     )
                 }
                 .scrollPosition($iceoLinkedPosition)
-                .onScrollGeometryChange(for: CGPoint.self) { geometry in
-                    geometry.contentOffset
-                } action: { _, offset in
-                    horizontalState.update(offset.x)
-                    verticalState.update(offset.y)
-                    onVerticalScroll?(offset.y)
-                    linkedHorizontalScroll?.report(offset.x, sender: iceoScrollSender)
-                    linkedVerticalScroll?.report(offset.y, sender: iceoVerticalSender)
+                .onScrollGeometryChange(for: IceoScrollSample.self) { geometry in
+                    let offset = geometry.contentOffset
+                    let width = max(1, columns.first?.width ?? 1)
+                    // The pinned team column is excluded from the scrolled
+                    // date area when determining the visible center date.
+                    let middle = offset.x
+                        + max(0, geometry.containerSize.width - rowHeaderWidth) * 0.5
+                    let column = max(0, Int(middle / width))
+                    return IceoScrollSample(
+                        x: offset.x, y: offset.y, centeredColumn: column
+                    )
+                } action: { _, sample in
+                    horizontalState.update(sample.x)
+                    verticalState.update(sample.y)
+                    onVerticalScroll?(sample.y)
+                    linkedHorizontalScroll?.report(
+                        sample.x, sender: iceoScrollSender,
+                        centeredColumn: sample.centeredColumn
+                    )
+                    linkedVerticalScroll?.report(sample.y, sender: iceoVerticalSender)
                 }
                 .onReceive(iceoExternalScrolls) { event in
                     guard event.sender != iceoScrollSender else { return }
