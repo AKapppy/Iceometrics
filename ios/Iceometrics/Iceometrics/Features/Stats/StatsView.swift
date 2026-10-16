@@ -996,8 +996,8 @@ private struct PlayerStatsPanel: View {
         Picker("Filter players", selection: $teamScope) {
             Text("Whole League").tag("LEAGUE")
             Section("Division") {
-                ForEach(divisions, id: \.name) { division in
-                    Text(division.name).tag("DIV:" + division.name)
+                ForEach(divisions.map { $0.name }, id: \.self) { divisionName in
+                    Text(divisionName).tag("DIV:" + divisionName)
                 }
             }
             Section("Team") {
