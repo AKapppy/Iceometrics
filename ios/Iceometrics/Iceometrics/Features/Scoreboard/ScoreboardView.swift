@@ -1564,14 +1564,16 @@ private struct IceometricsDocSmartSection: View {
         let numberOfGames = sectionGameCounts.reduce(0, +)
         let crowding = min(1.0, CGFloat(max(0, numberOfGames - 2)) / 12.0)
         var value: CGFloat = 1
-        if isFavorite(game) { value += 0.42 * (1 - crowding * 0.60) }
+        // Favorite is visibly larger on a busy slate (not a full-width row).
+        // Weight tapers moderately with crowding but never disappears.
+        if isFavorite(game) { value += 1.08 * (1 - crowding * 0.23) }
         if !isFavorite(game)
             && (rivals.contains(game.awayTeam.abbreviation.uppercased())
                 || rivals.contains(game.homeTeam.abbreviation.uppercased())) {
-            value += 0.18 * (1 - crowding * 0.55)
+            value += 0.27 * (1 - crowding * 0.45)
         }
-        if overtime(game) || lateClose(game) { value += 0.22 * (1 - crowding * 0.45) }
-        return min(1.75, value)
+        if overtime(game) || lateClose(game) { value += 0.45 * (1 - crowding * 0.30) }
+        return min(2.30, value)
     }
 
     // Only facts available in the loaded schedule are shown. Missing prior games
@@ -1629,7 +1631,12 @@ private struct IceometricsDocSmartSection: View {
                                             (rivals.contains(game.awayTeam.abbreviation.uppercased())
                                              || rivals.contains(game.homeTeam.abbreviation.uppercased())
                                              ? .rival : .normal)),
+                                    // Limit network requests during large slates:
+                                    // only unusually important roomy cards load rich detail.
                                     loadRichDetail: sectionGameCounts.reduce(0, +) <= 4
+                                        || (cardHeight >= 270 && (
+                                            isFavorite(game) || overtime(game) || lateClose(game)
+                                        ))
                                 )
                             }
                             .buttonStyle(.plain)
@@ -1687,6 +1694,7 @@ private struct IceometricsDocSmartCard: View {
             let logoSize = min(176, max(30, min(width * 0.28, cardHeight * 0.32)))
             let scoreSize = min(82, max(18, min(width * 0.15, cardHeight * 0.23)))
             let supportingSize = min(21, max(10, min(width * 0.051, cardHeight * 0.055)))
+            let detailFontSize = min(19, max(12, min(width * 0.028, cardHeight * 0.035)))
             let expanded = cardHeight >= 295 && width >= 265
 
             VStack(spacing: compact ? 4 : 11) {
@@ -1697,16 +1705,6 @@ private struct IceometricsDocSmartCard: View {
                             .monospacedDigit()
                     }
                     Spacer(minLength: 0)
-                    if emphasis == .favorite && width >= 210 {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.tint)
-                            .font(.system(size: supportingSize * 0.85))
-                            .accessibilityLabel("Favorite team")
-                    } else if (isOvertime || isClose) && width >= 210 {
-                        Text(isOvertime ? "OT / SO" : "CLOSE GAME")
-                            .font(.system(size: max(10, supportingSize * 0.75), weight: .bold))
-                            .foregroundStyle(.orange)
-                    }
                     Spacer(minLength: 0)
                     if showPrediction, let probability = prediction?.homeWinProbability {
                         Text(probability, format: .percent.precision(.fractionLength(1)))
@@ -1734,8 +1732,8 @@ private struct IceometricsDocSmartCard: View {
                     teamColumn(game.homeTeam, shots: game.homeShots, logoSize: logoSize,
                                supportingSize: supportingSize)
                 }
-                Spacer(minLength: 0)
-
+                // Keep verified context directly beneath the matchup instead of
+                // pinning microscopic player names to the card's bottom edge.
                 if game.status == .live, game.isIntermission != true,
                    let situation = expandedDetail?.specialTeams.state,
                    situation.contains("Power Play") {
@@ -1745,60 +1743,61 @@ private struct IceometricsDocSmartCard: View {
                 }
 
                 if expanded {
-                    if game.status == .scheduled, let detail = expandedDetail {
-                        let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
-                        let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
-                        if awayLeader != nil || homeLeader != nil {
-                            HStack(alignment: .top, spacing: 14) {
-                                richTeamColumn(team: game.awayTeam.abbreviation,
-                                               heading: "Team leader", value: awayLeader)
-                                richTeamColumn(team: game.homeTeam.abbreviation,
-                                               heading: "Team leader", value: homeLeader)
+                    VStack(spacing: min(18, max(8, cardHeight * 0.022))) {
+                        if game.status == .scheduled, let detail = expandedDetail {
+                            let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
+                            let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
+                            if awayLeader != nil || homeLeader != nil {
+                                comparisonDetail(
+                                    title: "TEAM LEADERS",
+                                    away: awayLeader ?? "—",
+                                    home: homeLeader ?? "—",
+                                    fontSize: detailFontSize
+                                )
                             }
                         }
-                    }
-                    if game.status == .live || game.status == .final,
-                       let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
-                        let away = scorers.filter {
-                            $0.team.uppercased() == game.awayTeam.abbreviation.uppercased()
-                        }.suffix(3)
-                        let home = scorers.filter {
-                            $0.team.uppercased() == game.homeTeam.abbreviation.uppercased()
-                        }.suffix(3)
-                        HStack(alignment: .top, spacing: 14) {
-                            richTeamColumn(team: game.awayTeam.abbreviation, heading: "Goals",
-                                           value: away.map { $0.player }.joined(separator: " · "))
-                            richTeamColumn(team: game.homeTeam.abbreviation, heading: "Goals",
-                                           value: home.map { $0.player }.joined(separator: " · "))
+                        if (game.status == .live || game.status == .final),
+                           let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
+                            let away = scorers.filter {
+                                $0.team.uppercased() == game.awayTeam.abbreviation.uppercased()
+                            }.suffix(3)
+                            let home = scorers.filter {
+                                $0.team.uppercased() == game.homeTeam.abbreviation.uppercased()
+                            }.suffix(3)
+                            comparisonDetail(
+                                title: "GOAL SCORERS",
+                                away: away.isEmpty ? "—" : away.map { $0.player }.joined(separator: " · "),
+                                home: home.isEmpty ? "—" : home.map { $0.player }.joined(separator: " · "),
+                                fontSize: detailFontSize
+                            )
                         }
-                    }
-                    if (game.status == .live || game.status == .final),
-                       cardHeight >= 405, width >= 350,
-                       let lines = expandedDetail?.stats {
-                        ForEach(lines.filter { stat in
-                            ["Face-off %", "Power Play"].contains(stat.label)
-                                && stat.awayValue != NHLGameDetailService.missingText
-                                && stat.homeValue != NHLGameDetailService.missingText
-                        }) { stat in
-                            HStack(spacing: 8) {
-                                Text(stat.awayValue)
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                                Text(stat.label)
-                                    .foregroundStyle(.secondary)
-                                    .frame(minWidth: 78)
-                                Text(stat.homeValue)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                        if (game.status == .live || game.status == .final),
+                           cardHeight >= 405, width >= 350,
+                           let lines = expandedDetail?.stats {
+                            ForEach(lines.filter { stat in
+                                ["Face-off %", "Power Play"].contains(stat.label)
+                                    && stat.awayValue != NHLGameDetailService.missingText
+                                    && stat.homeValue != NHLGameDetailService.missingText
+                            }) { stat in
+                                comparisonDetail(
+                                    title: stat.label.uppercased(),
+                                    away: stat.awayValue,
+                                    home: stat.homeValue,
+                                    fontSize: detailFontSize * 0.85
+                                )
                             }
-                            .font(.caption2.monospacedDigit())
+                        }
+                        if let seasonSeriesText {
+                            Text(seasonSeriesText)
+                                .font(.system(size: detailFontSize * 0.80, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2).minimumScaleFactor(0.75)
                         }
                     }
-                    if let seasonSeriesText {
-                        Text(seasonSeriesText)
-                            .font(.system(size: max(11, supportingSize * 0.72), weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2).minimumScaleFactor(0.78)
-                    }
+                    .frame(maxWidth: .infinity)
                 }
+
+                Spacer(minLength: 0)
 
                 Label(
                     game.venue?.isEmpty == false ? (game.venue ?? "") : "Venue TBD",
@@ -1830,15 +1829,37 @@ private struct IceometricsDocSmartCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func richTeamColumn(team: String, heading: String, value: String?) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("\(team) · \(heading)")
-                .font(.caption2.bold()).foregroundStyle(.secondary)
-            Text(value?.isEmpty == false ? (value ?? "") : "Not reported")
-                .font(.caption.weight(.medium))
-                .lineLimit(3).minimumScaleFactor(0.72)
+    private func comparisonDetail(
+        title: String,
+        away: String,
+        home: String,
+        fontSize: CGFloat
+    ) -> some View {
+        VStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(game.awayTeam.abbreviation)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(title)
+                    .fontWeight(.semibold)
+                    .fixedSize(horizontal: true, vertical: false)
+                Text(game.homeTeam.abbreviation)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .font(.system(size: fontSize * 0.76, weight: .medium))
+            .foregroundStyle(.secondary)
+
+            HStack(alignment: .top, spacing: 14) {
+                Text(away)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(home)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .font(.system(size: fontSize, weight: .medium))
+            .lineLimit(2)
+            .minimumScaleFactor(0.75)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private func teamColumn(_ team: Team, shots: Int?, logoSize: CGFloat,
