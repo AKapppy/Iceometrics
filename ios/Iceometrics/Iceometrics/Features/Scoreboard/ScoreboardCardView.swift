@@ -113,59 +113,7 @@ struct ScoreboardCardView: View {
     }
 
     private var liveBadgeText: String {
-        if game.isIntermission == true {
-            if let periodLabel {
-                return "\(periodLabel) Int"
-            }
-            return "Int"
-        }
-
-        let clock = game.timeRemaining?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let periodLabel,
-           let clock,
-           !clock.isEmpty {
-            return "\(periodLabel) · \(clock)"
-        }
-
-        if let periodLabel {
-            return periodLabel
-        }
-
-        if let clock, !clock.isEmpty {
-            return clock
-        }
-
-        return "LIVE"
-    }
-
-    private var periodLabel: String? {
-        let type = game.periodType?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .uppercased()
-
-        if type == "OT" {
-            return "OT"
-        }
-        if type == "SO" {
-            return "SO"
-        }
-
-        guard let period = game.periodNumber, period > 0 else {
-            return nil
-        }
-
-        switch period {
-        case 1:
-            return "1st"
-        case 2:
-            return "2nd"
-        case 3:
-            return "3rd"
-        default:
-            return "\(period)th"
-        }
+        game.scoreboardLiveText
     }
 
     private func displayedProbability(_ value: Double?) -> Double? {
