@@ -370,7 +370,7 @@ private struct PredictionMetricPanel: View {
     @State private var focusedColumnIndex: Int?
     @State private var jumpColumnIndex: Int?
 
-    private var teamWidth: CGFloat { compact ? 82 : 105 }
+    private var teamWidth: CGFloat { compact ? 78 : 90 }
     private var dateWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
@@ -608,7 +608,7 @@ private struct PredictionSpreadsheet: View {
 
     private let rowHeight: CGFloat = 36
 
-    private var teamColumnWidth: CGFloat { compact ? 82 : 105 }
+    private var teamColumnWidth: CGFloat { compact ? 78 : 90 }
     private var dateColumnWidth: CGFloat { compact ? 58 : 62 }
 
     private var todayIndex: Int {
