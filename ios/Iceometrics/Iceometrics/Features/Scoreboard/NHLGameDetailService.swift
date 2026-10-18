@@ -85,8 +85,70 @@ nonisolated enum NHLGameDetailError: LocalizedError, Sendable {
     }
 }
 
+// NHL play-by-play publishes skater counts, not an inferred penalty timer.
+// Hide unreported/stale situations rather than inventing a power play.
+nonisolated struct NHLOnIceStrength: Sendable, Equatable {
+    let awayBadge: String?
+    let homeBadge: String?
+    let centerBadge: String?
+}
+
 nonisolated struct NHLGameDetailService: Sendable {
     static let missingText = "⚠︎ NF"
+
+    func fetchOnIceStrength(for game: HockeyGame) async -> NHLOnIceStrength? {
+        guard game.status == .live, game.isIntermission != true,
+              game.leagueCode == "NHL",
+              Int(game.id) != nil,
+              let url = URL(string:
+                "https://api-web.nhle.com/v1/gamecenter/\(game.id)/play-by-play"
+              ),
+              let payload = Self.jsonObject(await Self.fetchDataIfAvailable(url)) else {
+            return nil
+        }
+        let plays = Self.dictionaries(payload["plays"])
+        guard let mostRecent = plays.last,
+              let strength = Self.strengthBadges(from: Self.string(mostRecent["situationCode"])) else {
+            return nil
+        }
+        // A previous period's final play cannot establish the current PP.
+        let period = Self.integer(Self.dictionary(mostRecent["periodDescriptor"])["number"])
+        if let current = game.periodNumber, current > 0, period != current {
+            return nil
+        }
+        return strength
+    }
+
+    private static func strengthBadges(from code: String) -> NHLOnIceStrength? {
+        let digits = code.filter(\.isNumber)
+        guard digits.count == 4,
+              let away = Int(String(Array(digits)[1])),
+              let home = Int(String(Array(digits)[2])),
+              (3...6).contains(away), (3...6).contains(home) else {
+            return nil
+        }
+        if away == 4 && home == 4 {
+            return NHLOnIceStrength(
+                awayBadge: nil, homeBadge: nil, centerBadge: "4 on 4"
+            )
+        }
+        if away > home {
+            let label = away == 5 && home == 4
+                ? "PP" : "\(away) on \(home) PP"
+            return NHLOnIceStrength(
+                awayBadge: label, homeBadge: nil, centerBadge: nil
+            )
+        }
+        if home > away {
+            let label = home == 5 && away == 4
+                ? "PP" : "\(home) on \(away) PP"
+            return NHLOnIceStrength(
+                awayBadge: nil, homeBadge: label, centerBadge: nil
+            )
+        }
+        return nil
+    }
+
 
     func fetchDetail(for game: HockeyGame) async throws -> NHLGameDetail {
         guard Int(game.id) != nil else {
