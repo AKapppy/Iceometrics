@@ -31,6 +31,8 @@ enum StatsPerformancePalette {
 
 struct StatsView: View {
     @StateObject private var viewModel: StatsViewModel
+    let isActive: Bool
+    let liveRefresh: (@MainActor () async -> Void)?
     @State private var selectedSection: StatsSection = .teamStats
     @AppStorage("iceometrics.stats.section") private var savedSection = "teamStats"
     @State private var selectedTeamCode: String?
@@ -39,10 +41,16 @@ struct StatsView: View {
     @EnvironmentObject private var settings: AppSettingsStore
 
     @MainActor
-    init(viewModel: StatsViewModel? = nil) {
+    init(
+        viewModel: StatsViewModel? = nil,
+        isActive: Bool = true,
+        liveRefresh: (@MainActor () async -> Void)? = nil
+    ) {
         _viewModel = StateObject(
             wrappedValue: viewModel ?? StatsViewModel()
         )
+        self.isActive = isActive
+        self.liveRefresh = liveRefresh
     }
 
     var body: some View {
@@ -87,6 +95,21 @@ struct StatsView: View {
         .task(priority: .utility) {
             await viewModel.loadIfNeeded()
             initializeFavoriteTeamSelectionIfNeeded()
+        }
+        // Only poll while Goal Differential is the visible Mac tab.
+        // Reuse the existing shared NHL score stream so other stats and
+        // Scoreboard remain in sync without opening another connection.
+        .task(id: "\(isActive)-\(selectedSection)") {
+            guard isActive, selectedSection == .goalDifferential,
+                  let liveRefresh else { return }
+            while !Task.isCancelled {
+                await liveRefresh()
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                } catch {
+                    return
+                }
+            }
         }
         .onChange(of: viewModel.snapshot?.generatedAt) { _, _ in
             initializeFavoriteTeamSelectionIfNeeded()
