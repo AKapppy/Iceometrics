@@ -370,7 +370,7 @@ private struct PlayoffPicturePanel: View {
                 if bracketMode == .nhl {
                     FullPlayoffBracketGraphic(picture: picture, teams: teams)
                 } else if let actualStandings {
-                    IceometricsSeededBracket(snapshot: actualStandings, mode: bracketMode)
+                    IceometricsSeededBracket(snapshot: actualStandings, mode: bracketMode, teams: teams)
                 } else if standingsLoading {
                     ProgressView("Loading NHL seedings…")
                 } else {
@@ -464,9 +464,13 @@ private enum IceometricsBracketMode: String, CaseIterable, Identifiable {
     }
 }
 
+// ICEOMETRICS_BLUE_MODELS_BRACKETS_20261018
+// Real current seeds are displayed at round one. Every future winner stays
+// deliberately blank; no projected outcomes are presented as official.
 private struct IceometricsSeededBracket: View {
     let snapshot: IceometricsNHLStandings
     let mode: IceometricsBracketMode
+    let teams: [ModelTeam]
 
     private var pools: [(String, [IceometricsNHLStanding])] {
         switch mode {
@@ -478,114 +482,274 @@ private struct IceometricsSeededBracket: View {
                     .sorted { $0.conferenceRank < $1.conferenceRank }
                     .prefix(8)))
             }
-        case .league16: return [("League 1–16", Array(snapshot.rows.prefix(16)))]
-        case .full32: return [("Full 32-team bracket", snapshot.rows)]
+        case .league16:
+            return [("League 1–16", Array(snapshot.rows.prefix(16)))]
+        case .full32:
+            return [("Full 32-team bracket", Array(snapshot.rows.prefix(32)))]
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("ACTUAL NHL standings seeding • Not Iceometrics projected winners")
+        VStack(alignment: .leading, spacing: 15) {
+            Text("ACTUAL NHL standings seeds · Future winners TBD")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(pools.indices, id: \.self) { index in
                 let pool = pools[index]
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(pool.0).font(.headline)
-                    let seeds = pool.1
-                    ForEach(0..<(seeds.count / 2), id: \.self) { i in
-                        let home = seeds[i]
-                        let away = seeds[seeds.count - 1 - i]
-                        HStack {
-                            Text("#\(i + 1) \(home.code)")
-                            Spacer(minLength: 8)
-                            Text("vs").foregroundStyle(.tertiary)
-                            Spacer(minLength: 8)
-                            Text("#\(seeds.count - i) \(away.code)")
-                        }
-                        .font(.subheadline.monospacedDigit())
-                        .padding(9)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
-                    }
-                    let rounds = seeds.count == 32 ? 5 : (seeds.count == 16 ? 4 : 3)
-                    HStack(spacing: 8) {
-                        ForEach(2...rounds, id: \.self) { number in
-                            VStack(spacing: 5) {
-                                Text("Round \(number)").font(.caption.bold())
-                                Text("TBD")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .padding(.vertical, 8)
+                if pool.1.count >= 8 {
+                    IceometricsSeededBracketBoard(
+                        title: pool.0, seeds: pool.1, teams: teams
+                    )
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct IceometricsActualStandingsPanel: View {
-    let snapshot: IceometricsNHLStandings
-    private let grid = [GridItem(.adaptive(minimum: 300), spacing: 12)]
-    private var conferences: [String] { ["Eastern", "Western"] }
-    private var divisions: [String] { ["Atlantic", "Metropolitan", "Central", "Pacific"] }
+private struct IceometricsSeededBracketBoard: View {
+    let title: String
+    let seeds: [IceometricsNHLStanding]
+    let teams: [ModelTeam]
 
-    private var wildcardStandings: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Wild Card • Full Conference Standings")
-                .font(.headline)
-            ForEach(conferences, id: \.self) { conference in
-                IceometricsStandingsTable(
-                    title: conference + " 1–16",
-                    rows: snapshot.rows
-                        .filter { $0.conference == conference }
-                        .sorted { $0.conferenceRank < $1.conferenceRank }
-                )
-            }
+    private let verticalStep: CGFloat = 52
+    private let circleSize: CGFloat = 36
+    private var rounds: Int {
+        seeds.count >= 32 ? 5 : (seeds.count >= 16 ? 4 : 3)
+    }
+    private var height: CGFloat {
+        CGFloat(seeds.count) * verticalStep + 55
+    }
+    private var firstRoundCodes: [String] {
+        guard seeds.count >= 2 else { return [] }
+        return (0..<(seeds.count / 2)).flatMap { index in
+            [seeds[index].code, seeds[seeds.count - index - 1].code]
         }
+    }
+    private func nodeY(round: Int, index: Int) -> CGFloat {
+        35 + (CGFloat(index) + 0.5) * verticalStep * CGFloat(1 << round)
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.headline)
+            GeometryReader { proxy in
+                let left: CGFloat = 25
+                let usable = max(1, proxy.size.width - 2 * left)
+                let step = usable / CGFloat(rounds)
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, _ in
+                        for round in 0..<rounds {
+                            let x0 = left + CGFloat(round) * step
+                            let x1 = x0 + step
+                            let elbow = x0 + step * 0.47
+                            let count = seeds.count >> (round + 1)
+                            for pair in 0..<count {
+                                let a = nodeY(round: round, index: pair * 2)
+                                let b = nodeY(round: round, index: pair * 2 + 1)
+                                let target = nodeY(round: round + 1, index: pair)
+                                var path = Path()
+                                path.move(to: CGPoint(x: x0 + circleSize / 2, y: a))
+                                path.addLine(to: CGPoint(x: elbow, y: a))
+                                path.addLine(to: CGPoint(x: elbow, y: b))
+                                path.addLine(to: CGPoint(x: x0 + circleSize / 2, y: b))
+                                path.move(to: CGPoint(x: elbow, y: (a + b) / 2))
+                                path.addLine(to: CGPoint(x: x1 - circleSize / 2, y: target))
+                                context.stroke(
+                                    path,
+                                    with: .color(Color.primary.opacity(0.25)),
+                                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
+                                )
+                            }
+                        }
+                    }
+                    ForEach(0...rounds, id: \.self) { round in
+                        let x = left + CGFloat(round) * step
+                        Text(round == rounds ? "Winner" : "R\(round + 1)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: x, y: 10)
+                        ForEach(0..<(seeds.count >> round), id: \.self) { index in
+                            let code = round == 0 && firstRoundCodes.indices.contains(index)
+                                ? firstRoundCodes[index] : ""
+                            ZStack {
+                                Circle()
+                                    .fill(Color.primary.opacity(0.05))
+                                    .overlay {
+                                        Circle().stroke(
+                                            Color.primary.opacity(0.19),
+                                            lineWidth: 0.8
+                                        )
+                                    }
+                                if code.isEmpty {
+                                    Circle()
+                                        .fill(Color.secondary.opacity(0.35))
+                                        .frame(width: 5, height: 5)
+                                } else {
+                                    ModelTeamLogo(
+                                        team: teamForCode(code, teams: teams),
+                                        code: code,
+                                        size: circleSize - 4
+                                    )
+                                }
+                            }
+                            .frame(width: circleSize, height: circleSize)
+                            .position(x: x, y: nodeY(round: round, index: index))
+                            .accessibilityLabel(code.isEmpty ? "To be determined" : code)
+                        }
+                    }
+                }
+            }
+            .frame(height: height)
+        }
+        .padding(11)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+// ICEOMETRICS_BLUE_MODELS_WILDCARD_20261018
+// The first three clubs in each division qualify in their division column.
+// The remaining ten clubs form a *continuous* Wild Card ranking from 1–10.
+// Rank uses the NHL's published conference and wildcard sequences, not
+// fabricated playoff placements.
+private struct IceometricsActualStandingsPanel: View {
+    let snapshot: IceometricsNHLStandings
+    private let grid = [GridItem(.adaptive(minimum: 300), spacing: 12)]
+    private let conferences = ["Eastern", "Western"]
+    private let divisions = ["Atlantic", "Metropolitan", "Central", "Pacific"]
+
+    var body: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Actual NHL standings • \(snapshot.date)")
+            VStack(alignment: .leading, spacing: 15) {
+                Text("Actual NHL standings · \(snapshot.date)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("Wild Card").font(.title3.bold())
+
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 12) {
-                        IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
-                        wildcardStandings
+                        conferencePanel("Eastern").frame(minWidth: 260)
+                        conferencePanel("Western").frame(minWidth: 260)
                     }
                     VStack(alignment: .leading, spacing: 12) {
-                        IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
-                        wildcardStandings
+                        conferencePanel("Eastern")
+                        conferencePanel("Western")
                     }
                 }
-                Text("Conferences").font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(conferences, id: \.self) { conference in
-                        IceometricsStandingsTable(
-                            title: conference + " 1–16",
-                            rows: snapshot.rows.filter { $0.conference == conference }
-                                .sorted { $0.conferenceRank < $1.conferenceRank }
-                        )
-                    }
-                }
-                Text("Divisions").font(.headline)
+
+                Text("League").font(.headline)
+                IceometricsCompactStandingTable(
+                    title: "League 1–32",
+                    rows: snapshot.rows,
+                    firstRank: 1
+                )
+                Text("Division Standings").font(.headline)
                 LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
                     ForEach(divisions, id: \.self) { division in
-                        IceometricsStandingsTable(
-                            title: division + " 1–8",
-                            rows: snapshot.rows.filter { $0.division == division }
-                                .sorted { $0.divisionRank < $1.divisionRank }
+                        IceometricsCompactStandingTable(
+                            title: division,
+                            rows: snapshot.rows
+                                .filter { $0.division == division }
+                                .sorted { $0.divisionRank < $1.divisionRank },
+                            firstRank: 1
                         )
                     }
                 }
             }
             .padding(.bottom, 16)
         }
+    }
+
+    private func conferencePanel(_ conference: String) -> some View {
+        let relevant = snapshot.rows.filter { $0.conference == conference }
+        let divisionNames: [String] = conference == "Eastern"
+            ? ["Atlantic", "Metropolitan"] : ["Central", "Pacific"]
+        let remaining = relevant.filter { $0.divisionRank > 3 }
+            .sorted { a, b in
+                if a.wildcardRank > 0 && b.wildcardRank > 0
+                    && a.wildcardRank != b.wildcardRank {
+                    return a.wildcardRank < b.wildcardRank
+                }
+                if a.points != b.points { return a.points > b.points }
+                return a.conferenceRank < b.conferenceRank
+            }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(conference + " Conference")
+                .font(.subheadline.bold())
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(divisionNames, id: \.self) { division in
+                    IceometricsCompactStandingTable(
+                        title: division,
+                        rows: relevant.filter {
+                            $0.division == division && $0.divisionRank <= 3
+                        }
+                        .sorted { $0.divisionRank < $1.divisionRank },
+                        firstRank: 1
+                    )
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            IceometricsCompactStandingTable(
+                title: "Wild Card 1–\(remaining.count)",
+                rows: remaining,
+                firstRank: 1,
+                wildCard: true
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct IceometricsCompactStandingTable: View {
+    let title: String
+    let rows: [IceometricsNHLStanding]
+    let firstRank: Int
+    var wildCard = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 8)
+            HStack(spacing: 5) {
+                Text("#").frame(width: 20, alignment: .trailing)
+                Text("Team")
+                Spacer(minLength: 0)
+                Text("PTS").frame(width: 31, alignment: .trailing)
+            }
+            .font(.caption2.bold())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            ForEach(rows.indices, id: \.self) { index in
+                let team = rows[index]
+                HStack(spacing: 5) {
+                    Text(String(firstRank + index))
+                        .frame(width: 20, alignment: .trailing)
+                        .foregroundStyle(.secondary)
+                    Text(team.code)
+                        .fontWeight(wildCard && index < 2 ? .bold : .regular)
+                    Spacer(minLength: 0)
+                    Text(String(team.points))
+                        .fontWeight(.semibold)
+                        .frame(width: 31, alignment: .trailing)
+                }
+                .font(.caption.monospacedDigit())
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(
+                    wildCard && index < 2
+                        ? Color.accentColor.opacity(0.11)
+                        : (index.isMultiple(of: 2)
+                            ? Color.primary.opacity(0.035) : Color.clear)
+                )
+            }
+        }
+        .padding(.bottom, 7)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
     }
 }
 
