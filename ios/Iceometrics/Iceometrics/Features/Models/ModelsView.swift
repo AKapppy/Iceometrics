@@ -354,18 +354,19 @@ private struct PlayoffPicturePanel: View {
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
-                ModelPanelHeader(
-                    title: "Playoff Picture",
-                    day: picture.day,
-                    subtitle: picture.mode
-                )
-
-                Picker("Bracket format", selection: $bracketMode) {
-                    ForEach(IceometricsBracketMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                HStack(spacing: 12) {
+                    Picker("Bracket format", selection: $bracketMode) {
+                        ForEach(IceometricsBracketMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 560)
+                    Spacer(minLength: 0)
+                    Text(displayModelDay(picture.day))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
 
                 if bracketMode == .nhl {
                     FullPlayoffBracketGraphic(picture: picture, teams: teams)
@@ -614,7 +615,7 @@ private struct IceometricsSeededBracketBoard: View {
 // fabricated playoff placements.
 private struct IceometricsActualStandingsPanel: View {
     let snapshot: IceometricsNHLStandings
-    private let grid = [GridItem(.adaptive(minimum: 300), spacing: 12)]
+    private let grid = [GridItem(.adaptive(minimum: 190), spacing: 10)]
     private let conferences = ["Eastern", "Western"]
     private let divisions = ["Atlantic", "Metropolitan", "Central", "Pacific"]
 
@@ -624,7 +625,7 @@ private struct IceometricsActualStandingsPanel: View {
                 Text("Actual NHL standings · \(snapshot.date)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Wild Card").font(.title3.bold())
+                // The Models tab already establishes the page title.
 
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 12) {
@@ -748,7 +749,7 @@ private struct IceometricsCompactStandingTable: View {
             }
         }
         .padding(.bottom, 7)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(width: 174, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
     }
 }
@@ -1210,7 +1211,7 @@ private struct MagicConferenceTable: View {
     let teams: [ModelTeam]
     let mode: MagicDisplayMode
 
-    private let teamWidth: CGFloat = 90
+    private let teamWidth: CGFloat = 76
     private let statWidth: CGFloat = 38
 
     private var cellWidth: CGFloat {
@@ -1482,7 +1483,7 @@ private struct PointProbabilitiesPanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
 
-    private let teamWidth: CGFloat = 90
+    private let teamWidth: CGFloat = 76
     private let predictionWidth: CGFloat = 46
     private let probabilityWidth: CGFloat = 48
 
