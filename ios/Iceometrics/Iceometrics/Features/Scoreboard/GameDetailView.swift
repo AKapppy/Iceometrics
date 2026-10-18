@@ -784,34 +784,13 @@ struct GameDetailView: View {
         case .scheduled:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            if game.isIntermission == true {
-                return "\(periodLabel ?? "") Int"
-                    .trimmingCharacters(in: .whitespaces)
-            }
-            if let periodLabel,
-               let time = game.timeRemaining,
-               !time.isEmpty {
-                return "\(periodLabel) · \(time)"
-            }
-            return periodLabel ?? "LIVE"
+            return game.scoreboardLiveText
         case .final:
             return "FINAL"
         case .postponed:
             return "PPD"
         case .unknown:
             return game.startTime.formatted(date: .omitted, time: .shortened)
-        }
-    }
-
-    private var periodLabel: String? {
-        if game.periodType?.uppercased() == "OT" { return "OT" }
-        if game.periodType?.uppercased() == "SO" { return "SO" }
-        guard let period = game.periodNumber, period > 0 else { return nil }
-        switch period {
-        case 1: return "1st"
-        case 2: return "2nd"
-        case 3: return "3rd"
-        default: return "\(period)th"
         }
     }
 
