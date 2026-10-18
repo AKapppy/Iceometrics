@@ -1664,6 +1664,7 @@ private struct IceometricsDocSmartCard: View {
     let loadRichDetail: Bool
 
     @State private var expandedDetail: NHLGameDetail?
+    @State private var onIceStrength: NHLOnIceStrength?
 
     private var showPrediction: Bool {
         game.status == .scheduled || game.status == .live
@@ -1714,6 +1715,11 @@ private struct IceometricsDocSmartCard: View {
                                supportingSize: supportingSize)
                     Spacer(minLength: 0)
                     VStack(spacing: 3) {
+                        if let fourOnFour = onIceStrength?.centerBadge {
+                            Text(fourOnFour)
+                                .font(.system(size: max(10, supportingSize * 0.85), weight: .bold))
+                                .foregroundStyle(.yellow)
+                        }
                         Text(scoreText)
                             .font(.system(size: scoreSize, weight: .heavy, design: .rounded))
                             .monospacedDigit().lineLimit(1).minimumScaleFactor(0.55)
@@ -1809,6 +1815,13 @@ private struct IceometricsDocSmartCard: View {
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(.quaternary, lineWidth: 1)
             }
+            .task(id: "\(game.id)-\(game.status)-\(game.periodNumber ?? 0)-\(game.timeRemaining ?? "")-\(game.isIntermission == true)") {
+                guard game.status == .live, game.isIntermission != true else {
+                    onIceStrength = nil
+                    return
+                }
+                onIceStrength = await NHLGameDetailService().fetchOnIceStrength(for: game)
+            }
             .task(id: "\(game.id)-\(game.status)-\(expanded)-\(loadRichDetail)") {
                 guard expanded, loadRichDetail, game.leagueCode == "NHL" else {
                     expandedDetail = nil
@@ -1860,6 +1873,19 @@ private struct IceometricsDocSmartCard: View {
                             supportingSize: CGFloat) -> some View {
         VStack(spacing: 3) {
             TeamLogoView(team: team, size: logoSize)
+                .overlay(alignment: .top) {
+                    let badge = team.id == game.awayTeam.id
+                        ? onIceStrength?.awayBadge : onIceStrength?.homeBadge
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: max(10, supportingSize * 0.80), weight: .heavy))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .foregroundStyle(.black)
+                            .background(.yellow, in: Capsule())
+                            .offset(y: -8)
+                    }
+                }
             if game.status == .live || game.status == .final {
                 Text("SOG \(shots.map(String.init) ?? "–")")
                     .font(.system(size: supportingSize, weight: .medium))
