@@ -1810,7 +1810,28 @@ private struct IceometricsDocSmartCard: View {
             .padding(.horizontal, compact ? 9 : 16)
             .padding(.vertical, compact ? 8 : 13)
             .frame(width: width, height: geometry.size.height)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .background {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(.thinMaterial)
+                    .overlay {
+                        if showPrediction, let prediction {
+                            GeometryReader { proxy in
+                                let share = min(0.88, max(0.12,
+                                    CGFloat(prediction.awayWinProbability)))
+                                HStack(spacing: 0) {
+                                    Color(hex: TeamAccentPalette.primaryHex(for: game.awayTeam)
+                                        ?? "", fallback: .clear)
+                                        .opacity(0.15)
+                                        .frame(width: proxy.size.width * share)
+                                    Color(hex: TeamAccentPalette.primaryHex(for: game.homeTeam)
+                                        ?? "", fallback: .clear)
+                                        .opacity(0.15)
+                                }
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(.quaternary, lineWidth: 1)
