@@ -562,11 +562,13 @@ nonisolated struct NHLGameDetailService: Sendable {
         // Only a documented boxscore "starter" boolean counts as a starter.
         // The strongest season goalie or most active live goalie could be a
         // backup, so neither is suitable as a substitute.
-        guard let starter = boxGoalies.first(where: { boolean($0["starter"]) }),
-              let name = playerName(starter) else {
+        let starters = boxGoalies.filter { boolean($0["starter"]) }
+        // Avoid treating inconsistent multi-starter records as confirmed.
+        guard starters.count == 1,
+              let name = playerName(starters[0]) else {
             return nil
         }
-        return NHLGoalieSlot(label: "NHL confirmed", name: name)
+        return NHLGoalieSlot(label: "NHL boxscore", name: name)
     }
 
     private static func scratchesFromRightRail(
