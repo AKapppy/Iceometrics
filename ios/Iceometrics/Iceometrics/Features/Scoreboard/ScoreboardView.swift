@@ -1274,13 +1274,7 @@ private struct SmartFillGameTile: View {
         case .scheduled:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            let period = game.periodType?.uppercased() ?? ""
-            let label = (period == "OT" || period == "SO")
-                ? period : "P\(game.periodNumber ?? 1)"
-            if let clock = game.timeRemaining, !clock.isEmpty {
-                return "LIVE · \(label) · \(clock)"
-            }
-            return "LIVE · \(label)"
+            return game.scoreboardLiveText
         case .final: return "FINAL"
         case .postponed: return "POSTPONED"
         case .unknown: return "STATUS PENDING"
@@ -1888,7 +1882,7 @@ private struct IceometricsDocSmartCard: View {
         case .scheduled, .unknown:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            return game.timeRemaining.map { "LIVE · " + $0 } ?? "LIVE"
+            return game.scoreboardLiveText
         case .final:
             let type = game.periodType?.uppercased() ?? ""
             return (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
