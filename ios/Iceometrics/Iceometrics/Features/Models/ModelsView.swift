@@ -1012,17 +1012,19 @@ private struct FullPlayoffBracketGraphic: View {
                     }
 
                     if hasOpeningRound {
-                        roundHeader("R0", x: e0)
-                        roundHeader("R0", x: w0)
+                        roundHeader("R1", x: e0)
+                        roundHeader("R1", x: w0)
                         bracketNodes(openingWest, x: e0, y: openingY, size: r0Size)
                         bracketNodes(openingEast, x: w0, y: openingY, size: r0Size)
+                        roundHeader("R5", x: e4)
+                        roundHeader("R5", x: w4)
                     }
-                    roundHeader("R1", x: e1)
-                    roundHeader("R2", x: e2)
-                    roundHeader("CF", x: e3)
-                    roundHeader("R1", x: w1)
-                    roundHeader("R2", x: w2)
-                    roundHeader("CF", x: w3)
+                    roundHeader(hasOpeningRound ? "R2" : "R1", x: e1)
+                    roundHeader(hasOpeningRound ? "R3" : "R2", x: e2)
+                    roundHeader(hasOpeningRound ? "R4" : "CF", x: e3)
+                    roundHeader(hasOpeningRound ? "R2" : "R1", x: w1)
+                    roundHeader(hasOpeningRound ? "R3" : "R2", x: w2)
+                    roundHeader(hasOpeningRound ? "R4" : "CF", x: w3)
                     roundHeader("Cup", x: centerX)
 
                     if showDivisionLabels {
