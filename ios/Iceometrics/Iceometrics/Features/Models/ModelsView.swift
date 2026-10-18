@@ -618,13 +618,11 @@ private struct IceometricsSeededBracket: View {
             cupFinal: [west.champion, east.champion],
             champion: cup
         )
-        // Same eastern rotation used for the displayed round-one pairs.
-        let visibleEastOpening = opening.map {
-            Array($0.right.suffix(4)) + Array($0.right.prefix(4))
-        } ?? []
+        // Bracket() already reverses the original NHL East-side data
+        // rotation. Opening nodes must remain in visible R1 order.
         return (simulated,
                 opening?.left.flatMap { $0 } ?? [],
-                visibleEastOpening.flatMap { $0 })
+                opening?.right.flatMap { $0 } ?? [])
     }
 
     var body: some View {
