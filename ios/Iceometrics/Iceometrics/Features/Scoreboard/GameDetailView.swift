@@ -229,15 +229,21 @@ struct GameDetailView: View {
     }
 
     private func goaliesSection(_ detail: NHLGameDetail) -> some View {
-        detailCard(title: "Goalies") {
+        detailCard(title: "Starting Goalies · NHL Boxscore") {
             twoTeamHeader
             Divider()
             threeColumnRow(
                 away: goalieText(detail.awayGoalie),
-                label: "Starter",
+                label: "Recorded Starter",
                 home: goalieText(detail.homeGoalie),
                 emphasize: false
             )
+            Text("Source: NHL gamecenter · A name appears only when the official boxscore flags a starter.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 9)
         }
     }
 
@@ -614,15 +620,8 @@ struct GameDetailView: View {
             return missing
         }
 
-        if slot.label == "Predicted" {
-            return missing
-        }
-
-        if slot.label == "Confirmed" {
-            return slot.name
-        }
-
-        return "\(slot.label): \(slot.name)"
+        // Only source-backed, NHL-recorded starters are populated here.
+        return slot.label == "NHL boxscore" ? slot.name : missing
     }
 
     private func numberOrMissing(_ value: Int?) -> String {
