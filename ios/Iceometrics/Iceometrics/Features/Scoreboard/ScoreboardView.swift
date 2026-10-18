@@ -1900,10 +1900,7 @@ private struct IceometricsDocSmartCard: View {
                     if let badge {
                         Text(badge)
                             .font(.system(size: max(10, supportingSize * 0.80), weight: .heavy))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .foregroundStyle(.black)
-                            .background(.yellow, in: Capsule())
+                            .foregroundStyle(.primary)
                             .offset(y: -8)
                     }
                 }
