@@ -34,7 +34,13 @@ struct RootView: View {
                 StatsView(
                     viewModel: StatsViewModel(
                         service: StatsDataService(season: settings.selectedSeason)
-                    )
+                    ),
+                    isActive: selectedTab == .stats
+                        && settings.selectedSeason == "2026-2027",
+                    liveRefresh: {
+                        await homeViewModel.loadIfNeeded()
+                        await homeViewModel.refreshLiveGames()
+                    }
                 )
                     .id(settings.selectedSeason)
                     .toolbar {
