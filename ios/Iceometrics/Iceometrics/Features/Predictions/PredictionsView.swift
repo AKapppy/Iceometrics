@@ -102,6 +102,7 @@ struct PredictionsView: View {
                     PredictionMetricPanel(
                         title: selectedMetric?.title
                             ?? "Prediction Probability",
+                        metricKey: selectedPredictionTab,
                         table: table,
                         teams: sortedTeams(
                             snapshot.teams,
@@ -360,6 +361,7 @@ private struct PredictionMetricButtonStyle: ButtonStyle {
 // ICEOMETRICS_NOTES_BIG_PASS_07_V1_PRED
 private struct PredictionMetricPanel: View {
     let title: String
+    let metricKey: String
     let table: PredictionTable
     let teams: [PredictionTeam]
     let season: String
@@ -396,24 +398,177 @@ private struct PredictionMetricPanel: View {
         return (0, ceiling)
     }
 
-    private var projectedFieldCount: Int {
-        let metric = title.lowercased()
-        if metric.contains("stanley cup") { return 2 }
-        if metric.contains("conference final") { return 4 }
-        if metric.contains("round 2") || metric.contains("second round") { return 8 }
-        if metric.contains("round 1") || metric.contains("first round") { return 12 }
-        if metric.contains("playoff") { return 16 }
-        return 0
+    // ICEOMETRICS_SCREENSHOT_PROJECTION_FIELDS_20261018
+    // Probability lists follow the *selected date and selected metric*,
+    // rather than a generic top-16 or an unrelated overall ranking.
+    private func rankingValue(_ team: PredictionTeam) -> Double {
+        guard let value = table.value(
+            teamCode: team.code, columnIndex: displayColumnIndex
+        ), value.isFinite else { return -1 }
+        return value
     }
 
-    private var projectionLeaders: [PredictionTeam] {
-        guard projectedFieldCount > 0 else { return [] }
-        let index = displayColumnIndex
-        return Array(teams.sorted {
-            let left = table.value(teamCode: $0.code, columnIndex: index) ?? -1
-            let right = table.value(teamCode: $1.code, columnIndex: index) ?? -1
-            return left == right ? $0.code < $1.code : left > right
-        }.prefix(projectedFieldCount))
+    private func ranked(_ candidates: [PredictionTeam]) -> [PredictionTeam] {
+        candidates.sorted { left, right in
+            let lhs = rankingValue(left)
+            let rhs = rankingValue(right)
+            return lhs == rhs ? left.code < right.code : lhs > rhs
+        }
+    }
+
+    private func conferenceTeams(_ conference: String) -> [PredictionTeam] {
+        teams.filter { team in
+            let value = team.conference.lowercased()
+            if !value.isEmpty {
+                return conference == "Western"
+                    ? value.hasPrefix("w") : value.hasPrefix("e")
+            }
+            let division = team.division.lowercased()
+            return conference == "Western"
+                ? division.contains("central") || division.contains("pacific")
+                : division.contains("atlantic") || division.contains("metropolitan")
+        }
+    }
+
+    private func divisionLeaders(_ division: String) -> [PredictionTeam] {
+        Array(ranked(teams.filter {
+            $0.division.localizedCaseInsensitiveContains(division)
+        }).prefix(3))
+    }
+
+    private func wildCardCandidates(_ conference: String) -> [PredictionTeam] {
+        let selectedCodes = Set([
+            "Atlantic", "Metropolitan", "Central", "Pacific"
+        ].flatMap { divisionLeaders($0) }.map(\.code))
+        return Array(ranked(conferenceTeams(conference).filter {
+            !selectedCodes.contains($0.code)
+        }).prefix(4))
+    }
+
+    private var projectionTitle: String {
+        switch metricKey {
+        case "madeplayoffs": return "Playoff Race"
+        case "round2": return "Win First Round"
+        case "round3": return "Win Second Round"
+        case "round4": return "Win Conference Finals"
+        case "woncup": return "Win Stanley Cup"
+        default: return "Likely Qualifiers"
+        }
+    }
+
+    private func projectedCount(_ conference: String) -> Int {
+        switch metricKey {
+        case "round2": return 6   // Four projected + two other contenders
+        case "round3": return 4   // Two projected + two other contenders
+        case "round4": return 2
+        default: return 0
+        }
+    }
+
+    @ViewBuilder
+    private func candidateLogo(_ team: PredictionTeam, size: CGFloat = 33) -> some View {
+        Button {
+            selectedTeamCode = team.code
+        } label: {
+            VStack(spacing: 2) {
+                PredictionTeamLogo(team: team)
+                    .frame(width: size, height: size)
+                Text(team.code)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minWidth: size + 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(team.name) · " +
+            (rankingValue(team) >= 0
+                ? rankingValue(team).formatted(.percent.precision(.fractionLength(1)))
+                : "No probability"))
+    }
+
+    @ViewBuilder
+    private func playoffConference(_ conference: String) -> some View {
+        let divisions = conference == "Western"
+            ? ["Central", "Pacific"] : ["Metropolitan", "Atlantic"]
+        VStack(alignment: .center, spacing: 7) {
+            Text(conference)
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(divisions, id: \.self) { division in
+                    VStack(spacing: 5) {
+                        Text(division)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        ForEach(divisionLeaders(division)) { team in
+                            candidateLogo(team, size: 26)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                }
+            }
+            Text("Wild Card challengers")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+            let wildcard = wildCardCandidates(conference)
+            HStack(alignment: .top, spacing: 9) {
+                ForEach(wildcard.indices, id: \.self) { index in
+                    candidateLogo(wildcard[index], size: 22)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var projectionField: some View {
+        VStack(spacing: 8) {
+            Text(projectionTitle)
+                .font(.headline.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .center)
+            if metricKey == "madeplayoffs" {
+                HStack(alignment: .top, spacing: 16) {
+                    playoffConference("Western")
+                    playoffConference("Eastern")
+                }
+            } else if metricKey == "woncup" {
+                VStack(spacing: 13) {
+                    ForEach(Array(ranked(teams).prefix(2))) { team in
+                        candidateLogo(team, size: 56)
+                    }
+                }
+            } else {
+                HStack(alignment: .top, spacing: 18) {
+                    ForEach(["Western", "Eastern"], id: \.self) { conference in
+                        let count = projectedCount(conference)
+                        let candidates = Array(
+                            ranked(conferenceTeams(conference)).prefix(count)
+                        )
+                        VStack(spacing: 7) {
+                            Text(conference)
+                                .font(.caption2.bold())
+                                .foregroundStyle(.secondary)
+                            ForEach(candidates.indices, id: \.self) { i in
+                                candidateLogo(candidates[i],
+                                    size: metricKey == "round4" ? 52 : 33)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            Text(metricKey == "madeplayoffs"
+                ? "Division top three and next four by probability per conference"
+                : "Ranked by this round's probability · Not confirmed matchups")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(Color.primary.opacity(0.035),
+                    in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var graphSeries: [TimelineGraphSeries] {
@@ -503,48 +658,54 @@ private struct PredictionMetricPanel: View {
                 }
 }
 
-            AlignedTimelineGraph(
-                labels: table.columns.map {
-                    displayPredictionDate($0, season: season)
-                },
-                series: graphSeries,
-                leadingWidth: teamWidth,
-                columnWidth: dateWidth,
-                yMin: yDomain.0,
-                yMax: yDomain.1,
-                initialColumnIndex: jumpColumnIndex ?? todayIndex,
-                height: 226,
-                showXLabels: false,
-                adaptiveYScale: false,
-                selectedSeriesID: selectedTeamCode,
-                zeroBaseline: true,
-                percentageScale: true,
-                linkedHorizontalScroll: iceoScrollLink
-            ) { value in
-                "\(Int(value.rounded()))%"
-            }
-            if !projectionLeaders.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Probability leaders · Not confirmed matchups")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(projectionLeaders) { team in
-                                Button {
-                                    selectedTeamCode = team.code
-                                } label: {
-                                    VStack(spacing: 3) {
-                                        PredictionTeamLogo(team: team)
-                                        Text(team.code).font(.caption2.weight(.semibold))
-                                    }
-                                    .frame(minWidth: 56)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 3)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                AlignedTimelineGraph(
+                    labels: table.columns.map {
+                        displayPredictionDate($0, season: season)
+                    },
+                    series: graphSeries,
+                    leadingWidth: teamWidth,
+                    columnWidth: dateWidth,
+                    yMin: yDomain.0,
+                    yMax: yDomain.1,
+                    initialColumnIndex: jumpColumnIndex ?? todayIndex,
+                    height: 226,
+                    showXLabels: false,
+                    adaptiveYScale: false,
+                    selectedSeriesID: selectedTeamCode,
+                    zeroBaseline: true,
+                    percentageScale: true,
+                    linkedHorizontalScroll: iceoScrollLink
+                ) { value in
+                    "\(Int(value.rounded()))%"
+                }
+                        .frame(minWidth: 460, maxWidth: .infinity)
+                    projectionField
+                        .frame(width: 340)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                AlignedTimelineGraph(
+                    labels: table.columns.map {
+                        displayPredictionDate($0, season: season)
+                    },
+                    series: graphSeries,
+                    leadingWidth: teamWidth,
+                    columnWidth: dateWidth,
+                    yMin: yDomain.0,
+                    yMax: yDomain.1,
+                    initialColumnIndex: jumpColumnIndex ?? todayIndex,
+                    height: 226,
+                    showXLabels: false,
+                    adaptiveYScale: false,
+                    selectedSeriesID: selectedTeamCode,
+                    zeroBaseline: true,
+                    percentageScale: true,
+                    linkedHorizontalScroll: iceoScrollLink
+                ) { value in
+                    "\(Int(value.rounded()))%"
+                }
+                        projectionField
                 }
             }
         }
