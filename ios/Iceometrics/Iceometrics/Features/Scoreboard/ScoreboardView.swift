@@ -1711,7 +1711,7 @@ private struct IceometricsDocSmartCard: View {
 
                 Spacer(minLength: 0)
                 HStack(spacing: 5) {
-                    teamColumn(game.awayTeam, shots: game.awayShots, logoSize: logoSize,
+                    teamColumn(game.awayTeam, logoSize: logoSize,
                                supportingSize: supportingSize)
                     Spacer(minLength: 0)
                     VStack(spacing: 3) {
@@ -1727,9 +1727,17 @@ private struct IceometricsDocSmartCard: View {
                             .font(.system(size: supportingSize, weight: .bold))
                             .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                             .minimumScaleFactor(0.7)
+                        if game.status == .live || game.status == .final {
+                            Text("SOG \(game.awayShots.map(String.init) ?? "–")  –  \(game.homeShots.map(String.init) ?? "–")")
+                                .font(.system(size: supportingSize * 0.85, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
                     }
                     Spacer(minLength: 0)
-                    teamColumn(game.homeTeam, shots: game.homeShots, logoSize: logoSize,
+                    teamColumn(game.homeTeam, logoSize: logoSize,
                                supportingSize: supportingSize)
                 }
                 // Keep verified context directly beneath the matchup instead of
@@ -1755,14 +1763,29 @@ private struct IceometricsDocSmartCard: View {
                                 fontSize: detailFontSize * 0.84
                             )
                         }
-                        if game.status == .scheduled, let detail = expandedDetail {
-                            let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
-                            let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
-                            if awayLeader != nil || homeLeader != nil {
+                        if game.status == .scheduled,
+                           let detail = expandedDetail {
+                            if detail.awayLeaders.goals != nil || detail.homeLeaders.goals != nil {
                                 comparisonDetail(
-                                    title: "TEAM LEADERS",
-                                    away: awayLeader ?? "—",
-                                    home: homeLeader ?? "—",
+                                    title: "GOALS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.goals ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.goals ?? "—", isAway: false),
+                                    fontSize: detailFontSize
+                                )
+                            }
+                            if detail.awayLeaders.assists != nil || detail.homeLeaders.assists != nil {
+                                comparisonDetail(
+                                    title: "ASSISTS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.assists ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.assists ?? "—", isAway: false),
+                                    fontSize: detailFontSize
+                                )
+                            }
+                            if detail.awayLeaders.points != nil || detail.homeLeaders.points != nil {
+                                comparisonDetail(
+                                    title: "POINTS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.points ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.points ?? "—", isAway: false),
                                     fontSize: detailFontSize
                                 )
                             }
@@ -1868,40 +1891,41 @@ private struct IceometricsDocSmartCard: View {
         .accessibilityElement(children: .combine)
     }
 
+    // All metric titles and two team values share one baseline.
     private func comparisonDetail(
         title: String,
         away: String,
         home: String,
         fontSize: CGFloat
     ) -> some View {
-        VStack(spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(game.awayTeam.abbreviation)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(title)
-                    .fontWeight(.semibold)
-                    .fixedSize(horizontal: true, vertical: false)
-                Text(game.homeTeam.abbreviation)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .font(.system(size: fontSize * 0.76, weight: .medium))
-            .foregroundStyle(.secondary)
-
-            HStack(alignment: .top, spacing: 14) {
-                Text(away)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(home)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .font(.system(size: fontSize, weight: .medium))
-            .lineLimit(2)
-            .minimumScaleFactor(0.75)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(away)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(title)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+            Text(home)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .font(.system(size: fontSize, weight: .medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.55)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
     }
 
-    private func teamColumn(_ team: Team, shots: Int?, logoSize: CGFloat,
+    private func leaderDisplay(_ value: String, isAway: Bool) -> String {
+        // NHL team leaders are formatted "Firstname Lastname (11)".
+        guard let open = value.range(of: " (", options: .backwards),
+              value.hasSuffix(")") else { return value }
+        let name = String(value[..<open.lowerBound])
+        let count = String(value[open.upperBound..<value.index(before: value.endIndex)])
+        return isAway ? "\(count) \(name)" : "\(name) \(count)"
+    }
+
+    private func teamColumn(_ team: Team, logoSize: CGFloat,
                             supportingSize: CGFloat) -> some View {
         VStack(spacing: 3) {
             TeamLogoView(team: team, size: logoSize)
@@ -1915,11 +1939,7 @@ private struct IceometricsDocSmartCard: View {
                             .offset(y: -8)
                     }
                 }
-            if game.status == .live || game.status == .final {
-                Text("SOG \(shots.map(String.init) ?? "–")")
-                    .font(.system(size: supportingSize, weight: .medium))
-                    .monospacedDigit().foregroundStyle(.secondary)
-            }
+
         }
         .frame(maxWidth: .infinity)
     }
