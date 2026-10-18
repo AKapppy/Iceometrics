@@ -357,10 +357,11 @@ private struct PlayoffPicturePanel: View {
     @State private var bracketMode: IceometricsBracketMode = .nhl
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 12) {
-                    Picker("Bracket format", selection: $bracketMode) {
+        GeometryReader { viewport in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Picker("Bracket format", selection: $bracketMode) {
                         ForEach(IceometricsBracketMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
@@ -374,24 +375,32 @@ private struct PlayoffPicturePanel: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if bracketMode == .nhl {
-                    FullPlayoffBracketGraphic(picture: picture, teams: teams)
-                } else if let actualStandings {
-                    IceometricsSeededBracket(
-                        snapshot: actualStandings,
-                        mode: bracketMode,
-                        teams: teams,
-                        projectedPoints: projectedPoints
-                    )
-                } else if standingsLoading {
+                    if bracketMode == .nhl {
+                        FullPlayoffBracketGraphic(
+                            picture: picture, teams: teams,
+                            availableHeight: max(620, viewport.size.height - 65)
+                        )
+                    } else if let actualStandings {
+                        IceometricsSeededBracket(
+                            picture: picture,
+                            snapshot: actualStandings,
+                            mode: bracketMode,
+                            teams: teams,
+                            projectedPoints: projectedPoints,
+                            availableHeight: max(620, viewport.size.height - 65)
+                        )
+                    } else if standingsLoading {
                     ProgressView("Loading NHL seedings…")
                 } else {
-                    Text(standingsError ?? "NHL seedings unavailable")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text(standingsError ?? "NHL seedings unavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .frame(maxWidth: .infinity, minHeight: viewport.size.height,
+                       alignment: .topLeading)
+                .padding(.bottom, 8)
             }
-            .padding(.bottom, 8)
         }
     }
 }
@@ -476,232 +485,177 @@ private enum IceometricsBracketMode: String, CaseIterable, Identifiable {
     }
 }
 
-// ICEOMETRICS_TWO_SIDED_PROJECTED_BRACKETS_20261018
-// NHL standings determine the initial seeds; projected season points determine
-// hypothetical winners in the alternative formats. These are NOT matchup odds.
+// ICEOMETRICS_DEMO_REUSE_ORIGINAL_BRACKET_20261018
+// All alternate formats use the original NHL bracket graphic. Only seeding,
+// optional round-of-32, and advancement change. No independent renderer.
 private struct IceometricsSeededBracket: View {
+    let picture: ModelPlayoffPicture
     let snapshot: IceometricsNHLStandings
     let mode: IceometricsBracketMode
     let teams: [ModelTeam]
     let projectedPoints: [String: Int]
+    let availableHeight: CGFloat
 
-    private var pools: [(String, [IceometricsNHLStanding])] {
+    private var byCode: [String: IceometricsNHLStanding] {
+        Dictionary(uniqueKeysWithValues: snapshot.rows.map {
+            ($0.code.uppercased(), $0)
+        })
+    }
+    private var seeded: [IceometricsNHLStanding] {
+        snapshot.rows.sorted { $0.leagueRank < $1.leagueRank }
+    }
+    private func conference(_ name: String) -> [IceometricsNHLStanding] {
+        Array(snapshot.rows.filter { $0.conference == name }
+            .sorted { $0.conferenceRank < $1.conferenceRank }.prefix(8))
+    }
+    private func codes(
+        _ all: [IceometricsNHLStanding], positions: [Int]
+    ) -> [String] {
+        positions.compactMap { rank in
+            let index = rank - 1
+            return all.indices.contains(index) ? all[index].code : nil
+        }
+    }
+    private func winner(_ a: String, _ b: String) -> String {
+        guard !a.isEmpty else { return b }
+        guard !b.isEmpty else { return a }
+        let pa = projectedPoints[a.uppercased()] ?? 0
+        let pb = projectedPoints[b.uppercased()] ?? 0
+        if pa != pb { return pa > pb ? a : b }
+        let sa = byCode[a.uppercased()]
+        let sb = byCode[b.uppercased()]
+        let actualA = sa?.points ?? 0
+        let actualB = sb?.points ?? 0
+        if actualA != actualB { return actualA > actualB ? a : b }
+        let ra = sa?.leagueRank ?? Int.max
+        let rb = sb?.leagueRank ?? Int.max
+        if ra != rb { return ra < rb ? a : b }
+        // Stable final tiebreaker: whichever has the better original seed,
+        // then team code if the feed omitted both ranks.
+        let ia = seeded.firstIndex { $0.code == a } ?? Int.max
+        let ib = seeded.firstIndex { $0.code == b } ?? Int.max
+        if ia != ib { return ia < ib ? a : b }
+        return a < b ? a : b
+    }
+    private func pairs(_ teams: [String]) -> [[String]] {
+        stride(from: 0, to: teams.count - 1, by: 2).map {
+            [teams[$0], teams[$0 + 1]]
+        }
+    }
+    private func bracket(_ firstEight: [String], eastern: Bool) -> ModelBracket {
+        let visualR1 = pairs(firstEight)
+        let winners1 = visualR1.map { winner($0[0], $0[1]) }
+        let visualR2 = pairs(winners1)
+        let winners2 = visualR2.map { winner($0[0], $0[1]) }
+        let champion = winner(winners2[0], winners2[1])
+        // The original NHL graphic rotates the Eastern side to match
+        // the upper/lower division columns. Store the inverse order.
+        let modelR1 = eastern
+            ? Array(visualR1.suffix(2)) + Array(visualR1.prefix(2))
+            : visualR1
+        let modelR2 = eastern ? Array(visualR2.reversed()) : visualR2
+        let modelFinal = eastern ? Array(winners2.reversed()) : winners2
+        return ModelBracket(
+            round1: modelR1,
+            round2: modelR2,
+            finalMatchup: modelFinal,
+            champion: champion
+        )
+    }
+
+    // Conference mode uses independent conference seeds. League modes split
+    // ranks between opposite halves of the original bracket structure.
+    private var seedGroups: (left: [String], right: [String])? {
         switch mode {
         case .nhl:
-            return []
+            return nil
         case .conference:
-            return ["Eastern", "Western"].map { conference in
-                (conference, Array(snapshot.rows
-                    .filter { $0.conference == conference }
-                    .sorted { $0.conferenceRank < $1.conferenceRank }
-                    .prefix(8)))
-            }
-        case .league16:
-            return [("League 1–16", Array(snapshot.rows.prefix(16)))]
-        case .full32:
-            return [("Full 32", Array(snapshot.rows.prefix(32)))]
+            let west = conference("Western")
+            let east = conference("Eastern")
+            guard west.count == 8, east.count == 8 else { return nil }
+            let slots = [1, 8, 4, 5, 2, 7, 3, 6]
+            return (codes(west, positions: slots), codes(east, positions: slots))
+        case .league16, .full32:
+            guard seeded.count >= (mode == .full32 ? 32 : 16) else { return nil }
+            let leftSlots = [1, 16, 8, 9, 4, 13, 5, 12]
+            let rightSlots = [2, 15, 7, 10, 3, 14, 6, 11]
+            return (codes(seeded, positions: leftSlots),
+                    codes(seeded, positions: rightSlots))
         }
+    }
+    private var preliminary: (left: [[String]], right: [[String]])? {
+        guard mode == .full32, seeded.count >= 32,
+              let groups = seedGroups else { return nil }
+        func matches(_ selected: [String]) -> [[String]] {
+            selected.map { code in
+                guard let seed = seeded.firstIndex(where: { $0.code == code }) else {
+                    return [code, ""]
+                }
+                return [code, seeded[31 - seed].code]
+            }
+        }
+        return (matches(groups.left), matches(groups.right))
+    }
+    private var bracketData: (
+        picture: ModelPlayoffPicture, leftOpening: [String], rightOpening: [String]
+    )? {
+        guard let groups = seedGroups,
+              groups.left.count == 8, groups.right.count == 8 else { return nil }
+        let opening = preliminary
+        let westCodes = opening?.left.map { winner($0[0], $0[1]) }
+            ?? groups.left
+        let eastCodes = opening?.right.map { winner($0[0], $0[1]) }
+            ?? groups.right
+        let west = bracket(westCodes, eastern: false)
+        let east = bracket(eastCodes, eastern: true)
+        let cup = winner(west.champion, east.champion)
+        let simulated = ModelPlayoffPicture(
+            day: picture.day,
+            seedDay: picture.seedDay,
+            mode: "Projected from MoneyPuck points; standings tiebreakers",
+            west: west,
+            east: east,
+            cupFinal: [west.champion, east.champion],
+            champion: cup
+        )
+        // Same eastern rotation used for the displayed round-one pairs.
+        let visibleEastOpening = opening.map {
+            Array($0.right.suffix(4)) + Array($0.right.prefix(4))
+        } ?? []
+        return (simulated,
+                opening?.left.flatMap { $0 } ?? [],
+                visibleEastOpening.flatMap { $0 })
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Text("Official NHL seeds · Advancement based on MoneyPuck projected points, not head-to-head odds")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(pools.indices, id: \.self) { index in
-                let pool = pools[index]
-                if pool.1.count >= 8 {
-                    IceometricsProjectedBracketBoard(
-                        title: pool.0,
-                        seeds: pool.1,
+        Group {
+            if let data = bracketData {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Projected winners: MoneyPuck season points → actual standings → seed tiebreaks")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    FullPlayoffBracketGraphic(
+                        picture: data.picture,
                         teams: teams,
-                        projectedPoints: projectedPoints
+                        availableHeight: availableHeight,
+                        openingWest: data.leftOpening,
+                        openingEast: data.rightOpening,
+                        leftTitle: mode == .conference
+                            ? "Western Conference" : "Seed Group A",
+                        rightTitle: mode == .conference
+                            ? "Eastern Conference" : "Seed Group B",
+                        showDivisionLabels: false
                     )
                 }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct IceometricsProjectedBracketBoard: View {
-    let title: String
-    let seeds: [IceometricsNHLStanding]
-    let teams: [ModelTeam]
-    let projectedPoints: [String: Int]
-
-    private let nodeSize: CGFloat = 42
-    private let gapY: CGFloat = 52
-    private let topY: CGFloat = 34
-    private let outerX: CGFloat = 32
-
-    private var sideCount: Int { seeds.count / 2 }
-    private var levels: Int {
-        sideCount >= 16 ? 4 : (sideCount >= 8 ? 3 : 2)
-    }
-    private var boardHeight: CGFloat {
-        topY + CGFloat(sideCount) * gapY + 22
-    }
-    private var minimumBoardWidth: CGFloat {
-        CGFloat(levels + 1) * 220
-    }
-
-    // Seed by rank: #1 vs last, #2 vs next-to-last, and so on.
-    private var roundOne: [[String]] {
-        (0..<sideCount).map { index in
-            [seeds[index].code, seeds[seeds.count - index - 1].code]
-        }
-    }
-    private func predictedWinner(_ first: String, _ second: String) -> String {
-        guard !first.isEmpty, !second.isEmpty,
-              let a = projectedPoints[first.uppercased()],
-              let b = projectedPoints[second.uppercased()],
-              a > 0, b > 0, a != b else {
-            return ""
-        }
-        return a > b ? first : second
-    }
-    private func roundCodes(isLeft: Bool, round: Int) -> [String] {
-        let half = roundOne.count / 2
-        let selected = isLeft
-            ? Array(roundOne.prefix(half))
-            : Array(roundOne.suffix(half))
-        var codes = selected.flatMap { $0 }
-        guard round > 0 else { return codes }
-        for _ in 0..<round {
-            guard codes.count >= 2 else { return codes }
-            codes = stride(from: 0, to: codes.count - 1, by: 2).map {
-                predictedWinner(codes[$0], codes[$0 + 1])
-            }
-        }
-        return codes
-    }
-    private var championshipWinner: String {
-        predictedWinner(
-            roundCodes(isLeft: true, round: levels).first ?? "",
-            roundCodes(isLeft: false, round: levels).first ?? ""
-        )
-    }
-    private func yPosition(round: Int, index: Int) -> CGFloat {
-        topY + (CGFloat(index) + 0.5) *
-            CGFloat(1 << round) * gapY
-    }
-    private func xPosition(isLeft: Bool, round: Int, width: CGFloat) -> CGFloat {
-        let half = width / 2
-        let step = (half - outerX) / CGFloat(levels + 1)
-        let x = outerX + CGFloat(round) * step
-        return isLeft ? x : width - x
-    }
-    private var finalY: CGFloat {
-        yPosition(round: levels, index: 0)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline.weight(.semibold))
-            GeometryReader { viewport in
-                ScrollView(.horizontal, showsIndicators: true) {
-                    let width = max(viewport.size.width, minimumBoardWidth)
-                    ZStack(alignment: .topLeading) {
-                        Canvas { context, _ in
-                            drawConnections(context: &context, isLeft: true, width: width)
-                            drawConnections(context: &context, isLeft: false, width: width)
-                        }
-                        bracketSide(isLeft: true, width: width)
-                        bracketSide(isLeft: false, width: width)
-                        Text("WINNER")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.secondary)
-                            .position(x: width / 2, y: 11)
-                        bracketTeam(championshipWinner)
-                            .position(x: width / 2, y: finalY)
-                    }
-                    .frame(width: width, height: boardHeight)
-                }
-            }
-            .frame(height: boardHeight)
-        }
-        .padding(10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    @ViewBuilder
-    private func bracketSide(isLeft: Bool, width: CGFloat) -> some View {
-        ForEach(0...levels, id: \.self) { round in
-            let x = xPosition(isLeft: isLeft, round: round, width: width)
-            let codes = roundCodes(isLeft: isLeft, round: round)
-            Text("R\(round + 1)")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
-                .position(x: x, y: 11)
-            ForEach(codes.indices, id: \.self) { index in
-                bracketTeam(codes[index])
-                    .position(x: x, y: yPosition(round: round, index: index))
-            }
-        }
-    }
-
-    private func bracketTeam(_ code: String) -> some View {
-        ZStack {
-            Circle()
-                .fill(Color.primary.opacity(0.06))
-            Circle()
-                .stroke(Color.primary.opacity(0.18), lineWidth: 0.8)
-            if code.isEmpty {
-                Text("–")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             } else {
-                ModelTeamLogo(
-                    team: teamForCode(code, teams: teams),
-                    code: code,
-                    size: nodeSize - 3
+                ContentUnavailableView(
+                    "Not enough NHL teams",
+                    systemImage: "trophy",
+                    description: Text("Complete standings are needed to seed this bracket.")
                 )
             }
         }
-        .frame(width: nodeSize, height: nodeSize)
-        .accessibilityLabel(code.isEmpty ? "To be determined" : code)
-    }
-
-    private func drawConnections(
-        context: inout GraphicsContext,
-        isLeft: Bool,
-        width: CGFloat
-    ) {
-        let direction: CGFloat = isLeft ? 1 : -1
-        for round in 0..<levels {
-            let before = xPosition(isLeft: isLeft, round: round, width: width)
-            let after = xPosition(isLeft: isLeft, round: round + 1, width: width)
-            let fromX = before + direction * nodeSize / 2
-            let toX = after - direction * nodeSize / 2
-            let elbow = fromX + (toX - fromX) * 0.45
-            let sourceCount = roundCodes(isLeft: isLeft, round: round).count
-            for pair in 0..<(sourceCount / 2) {
-                let a = yPosition(round: round, index: pair * 2)
-                let b = yPosition(round: round, index: pair * 2 + 1)
-                let target = yPosition(round: round + 1, index: pair)
-                var path = Path()
-                path.move(to: CGPoint(x: fromX, y: a))
-                path.addLine(to: CGPoint(x: elbow, y: a))
-                path.addLine(to: CGPoint(x: elbow, y: b))
-                path.addLine(to: CGPoint(x: fromX, y: b))
-                path.move(to: CGPoint(x: elbow, y: (a + b) / 2))
-                path.addLine(to: CGPoint(x: toX, y: target))
-                context.stroke(path,
-                    with: .color(Color.primary.opacity(0.28)),
-                    style: StrokeStyle(lineWidth: 0.9, lineCap: .round)
-                )
-            }
-        }
-        // Each conference/half sends one finalist toward the centered winner.
-        let x = xPosition(isLeft: isLeft, round: levels, width: width)
-        var path = Path()
-        path.move(to: CGPoint(x: x + direction * nodeSize / 2, y: finalY))
-        path.addLine(to: CGPoint(x: width / 2 - direction * nodeSize / 2, y: finalY))
-        context.stroke(path,
-            with: .color(Color.primary.opacity(0.28)),
-            style: StrokeStyle(lineWidth: 1, lineCap: .round)
-        )
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -895,10 +849,21 @@ private struct IceometricsStandingsTable: View {
 private struct FullPlayoffBracketGraphic: View {
     let picture: ModelPlayoffPicture
     let teams: [ModelTeam]
+    var availableHeight: CGFloat = 0
+    var openingWest: [String] = []
+    var openingEast: [String] = []
+    var leftTitle: String = "Western Conference"
+    var rightTitle: String = "Eastern Conference"
+    var showDivisionLabels = true
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    // Extra vertical room for Mac and iPad; iPhone retains compact proportions.
-    private var height: CGFloat { horizontalSizeClass == .compact ? 650 : 930 }
+    private var hasOpeningRound: Bool {
+        openingWest.count == 16 && openingEast.count == 16
+    }
+    // One large bracket fills the Mac viewport instead of stacking boards.
+    private var height: CGFloat {
+        max(horizontalSizeClass == .compact ? 650 : 620, availableHeight)
+    }
     private var verticalScale: CGFloat { height / 650 }
     // Round-aware sizes stay within each bracket column, scaling on Mac
     // without letting adjacent conference/cup circles overlap on iPhone.
@@ -909,6 +874,12 @@ private struct FullPlayoffBracketGraphic: View {
     }
 
     private var round1Y: [CGFloat] { [90, 138, 194, 242, 416, 464, 520, 568].map { $0 * verticalScale } }
+    private var openingY: [CGFloat] {
+        round1Y.flatMap { [$0 - 11 * verticalScale, $0 + 11 * verticalScale] }
+    }
+    private var openingPairs: [(CGFloat, CGFloat)] {
+        round1Y.indices.map { (openingY[2 * $0], openingY[2 * $0 + 1]) }
+    }
     private var round2Y: [CGFloat] { [114, 218, 440, 544].map { $0 * verticalScale } }
     private var conferenceFinalY: [CGFloat] { [166, 492].map { $0 * verticalScale } }
     private var conferenceChampionY: CGFloat { 328 * verticalScale }
@@ -924,11 +895,11 @@ private struct FullPlayoffBracketGraphic: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Western Conference")
+                Text(leftTitle)
                 Spacer()
                 Text("Stanley Cup")
                 Spacer()
-                Text("Eastern Conference")
+                Text(rightTitle)
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -941,7 +912,8 @@ private struct FullPlayoffBracketGraphic: View {
                 let leftEdge: CGFloat = roundOneInset
                 let rightEdge = max(leftEdge + 120, proxy.size.width - roundOneInset)
                 let centerX = proxy.size.width / 2
-                let step = max(30, (centerX - leftEdge) / 4)
+                let step = max(30, (centerX - leftEdge) / (hasOpeningRound ? 5 : 4))
+                let r0Size = min(24, max(18, 21 * verticalScale))
                 let r1Size = min(
                     sizeForRound(0, step: step),
                     2 * roundOneInset - 6
@@ -951,18 +923,36 @@ private struct FullPlayoffBracketGraphic: View {
                 let championSize = sizeForRound(3, step: step)
                 let cupSize = sizeForRound(4, step: step)
 
-                let e1 = leftEdge
-                let e2 = leftEdge + step
-                let e3 = leftEdge + step * 2
-                let e4 = leftEdge + step * 3
+                let e0 = leftEdge
+                let e1 = leftEdge + (hasOpeningRound ? step : 0)
+                let e2 = e1 + step
+                let e3 = e1 + step * 2
+                let e4 = e1 + step * 3
 
-                let w1 = rightEdge
-                let w2 = rightEdge - step
-                let w3 = rightEdge - step * 2
-                let w4 = rightEdge - step * 3
+                let w0 = rightEdge
+                let w1 = rightEdge - (hasOpeningRound ? step : 0)
+                let w2 = w1 - step
+                let w3 = w1 - step * 2
+                let w4 = w1 - step * 3
 
                 ZStack {
                     Canvas { context, _ in
+                        if hasOpeningRound {
+                            drawConnections(
+                                context: &context,
+                                fromX: e0 + r0Size / 2,
+                                toX: e1 - r1Size / 2,
+                                sourcePairs: openingPairs,
+                                destinationY: round1Y
+                            )
+                            drawConnections(
+                                context: &context,
+                                fromX: w0 - r0Size / 2,
+                                toX: w1 + r1Size / 2,
+                                sourcePairs: openingPairs,
+                                destinationY: round1Y
+                            )
+                        }
                         drawConnections(
                             context: &context,
                             fromX: e1 + r1Size / 2,
@@ -1021,6 +1011,12 @@ private struct FullPlayoffBracketGraphic: View {
                         )
                     }
 
+                    if hasOpeningRound {
+                        roundHeader("R0", x: e0)
+                        roundHeader("R0", x: w0)
+                        bracketNodes(openingWest, x: e0, y: openingY, size: r0Size)
+                        bracketNodes(openingEast, x: w0, y: openingY, size: r0Size)
+                    }
                     roundHeader("R1", x: e1)
                     roundHeader("R2", x: e2)
                     roundHeader("CF", x: e3)
@@ -1029,22 +1025,24 @@ private struct FullPlayoffBracketGraphic: View {
                     roundHeader("CF", x: w3)
                     roundHeader("Cup", x: centerX)
 
-                    Text("CENTRAL")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: e1 + 36, y: 48 * verticalScale)
-                    Text("PACIFIC")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: e1 + 36, y: 365 * verticalScale)
-                    Text("METRO")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: w1 - 36, y: 48 * verticalScale)
-                    Text("ATLANTIC")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: w1 - 36, y: 365 * verticalScale)
+                    if showDivisionLabels {
+                        Text("CENTRAL")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: e1 + 36, y: 48 * verticalScale)
+                        Text("PACIFIC")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: e1 + 36, y: 365 * verticalScale)
+                        Text("METRO")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: w1 - 36, y: 48 * verticalScale)
+                        Text("ATLANTIC")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: w1 - 36, y: 365 * verticalScale)
+                    }
 
                     bracketNodes(westRound1, x: e1, y: round1Y, size: r1Size)
                     bracketNodes(westRound2, x: e2, y: round2Y, size: r2Size)
