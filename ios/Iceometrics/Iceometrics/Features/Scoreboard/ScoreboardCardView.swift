@@ -151,10 +151,7 @@ private struct TeamScoreRow: View {
                     if let strengthBadge {
                         Text(strengthBadge)
                             .font(.caption2.weight(.heavy))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .foregroundStyle(.black)
-                            .background(.yellow, in: Capsule())
+                            .foregroundStyle(.primary)
                             .offset(y: -8)
                     }
                 }
