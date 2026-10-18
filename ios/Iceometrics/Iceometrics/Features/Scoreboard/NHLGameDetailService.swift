@@ -119,13 +119,22 @@ nonisolated struct NHLGameDetailService: Sendable {
         return strength
     }
 
-    private static func strengthBadges(from code: String) -> NHLOnIceStrength? {
+    static func strengthBadges(from code: String) -> NHLOnIceStrength? {
         let digits = code.filter(\.isNumber)
         guard digits.count == 4,
               let away = Int(String(Array(digits)[1])),
               let home = Int(String(Array(digits)[2])),
               (3...6).contains(away), (3...6).contains(home) else {
             return nil
+        }
+        // Six skaters means a pulled goalie/extra attacker, NOT a power play.
+        // Show "Empty Net" over the six-skater team's logo.
+        if away == 6 || home == 6 {
+            return NHLOnIceStrength(
+                awayBadge: away == 6 ? "Empty Net" : nil,
+                homeBadge: home == 6 ? "Empty Net" : nil,
+                centerBadge: nil
+            )
         }
         if away == 4 && home == 4 {
             return NHLOnIceStrength(
@@ -652,6 +661,13 @@ nonisolated struct NHLGameDetailService: Sendable {
 
         let awaySkaters = values[1]
         let homeSkaters = values[2]
+        guard (3...6).contains(awaySkaters),
+              (3...6).contains(homeSkaters) else { return nil }
+        if awaySkaters == 6 || homeSkaters == 6 {
+            let club = awaySkaters == 6 ? awayCode : homeCode
+            return "\(club) Empty Net"
+        }
+        if awaySkaters == 4 && homeSkaters == 4 { return "4 on 4" }
         if awaySkaters > homeSkaters {
             return "\(awayCode) Power Play"
         }
