@@ -470,13 +470,9 @@ private struct PredictionMetricPanel: View {
         Button {
             selectedTeamCode = team.code
         } label: {
-            VStack(spacing: 2) {
-                PredictionTeamLogo(team: team, size: size)
-                Text(team.code)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minWidth: size + 2)
+            PredictionTeamLogo(team: team, size: size)
+                .frame(minWidth: size + 2)
+                .accessibilityLabel(team.name)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -623,6 +619,17 @@ private struct PredictionMetricPanel: View {
         }
     }
 
+    private var projectionGraphHeight: CGFloat {
+        // Keep the timeline proportional to the displayed playoff field.
+        switch metricKey {
+        case "round2": return 312
+        case "madeplayoffs": return 245
+        case "round3": return 238
+        case "round4", "woncup": return 226
+        default: return 226
+        }
+    }
+
     private var probabilityChart: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -669,7 +676,7 @@ private struct PredictionMetricPanel: View {
                     yMin: yDomain.0,
                     yMax: yDomain.1,
                     initialColumnIndex: jumpColumnIndex ?? todayIndex,
-                    height: 226,
+                    height: projectionGraphHeight,
                     showXLabels: false,
                     adaptiveYScale: false,
                     selectedSeriesID: selectedTeamCode,
@@ -694,7 +701,7 @@ private struct PredictionMetricPanel: View {
                     yMin: yDomain.0,
                     yMax: yDomain.1,
                     initialColumnIndex: jumpColumnIndex ?? todayIndex,
-                    height: 226,
+                    height: projectionGraphHeight,
                     showXLabels: false,
                     adaptiveYScale: false,
                     selectedSeriesID: selectedTeamCode,
@@ -807,44 +814,53 @@ private struct PredictionSpreadsheet: View {
                             teamCode: team.code,
                             columnIndex: focusColumnIndex
                         )
-                        HStack(spacing: 7) {
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
+                        GeometryReader { geo in
+                            let fraction = value.map {
+                                CGFloat(min(1, max(0, $0.isFinite ? $0 : 0)))
+                            } ?? 0
+                            let barWidth = geo.size.width * fraction
+                            ZStack(alignment: .leading) {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.075))
+                                if let value, value.isFinite {
+                                    // A single square-ended probability bar; retain the
+                                    // two-team-color gradient anchored at true 0%.
                                     Rectangle()
-                                        .fill(Color.primary.opacity(0.085))
-                                    if let value, value.isFinite {
-                                        // Keep the gradient on the full track,
-                                        // then clip to probability. Small values
-                                        // therefore use only the dark end.
-                                        Rectangle()
-                                            .fill(
-                                                LinearGradient(
-                                                    colors: TeamPerformancePalette.predictionBarColors(
-                                                        teamCode: team.code,
-                                                        fallbackHex: team.colorHex
-                                                    ),
-                                                    startPoint: .leading,
-                                                    endPoint: .trailing
-                                                )
-                                            )
-                                            .frame(width: geo.size.width)
-                                            .frame(
-                                                width: max(0, geo.size.width *
-                                                    CGFloat(min(1, max(0, value)))),
-                                                alignment: .leading
-                                            )
-                                            .clipped()
+                                        .fill(LinearGradient(
+                                            colors: TeamPerformancePalette.predictionBarColors(
+                                                teamCode: team.code,
+                                                fallbackHex: team.colorHex
+                                            ),
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        ))
+                                        .frame(width: geo.size.width)
+                                        .frame(width: barWidth, alignment: .leading)
+                                        .clipped()
+                                    if barWidth > 67 {
+                                        Text(value.formatted(
+                                            .percent.precision(.fractionLength(1))
+                                        ))
+                                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .shadow(color: .black.opacity(0.60), radius: 2)
+                                        .frame(width: barWidth - 7, alignment: .trailing)
+                                    } else {
+                                        Text(value.formatted(
+                                            .percent.precision(.fractionLength(1))
+                                        ))
+                                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                        .offset(x: min(geo.size.width - 45, barWidth + 6))
                                     }
+                                } else {
+                                    Text("—")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
                             }
-                            .frame(height: 11)
-                            Text(value.map {
-                                $0.formatted(.percent.precision(.fractionLength(1)))
-                            } ?? "—")
-                                .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                                .frame(width: 52, alignment: .trailing)
-                                .foregroundStyle(value == nil ? .tertiary : .primary)
                         }
+                        .frame(height: 24)
                         .padding(.horizontal, 9)
                         .frame(height: rowHeight)
                         .background(Color.primary.opacity(0.018))
