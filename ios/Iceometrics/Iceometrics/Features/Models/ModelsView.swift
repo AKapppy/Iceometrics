@@ -111,6 +111,12 @@ struct ModelsView: View {
                         PlayoffPicturePanel(
                             picture: picture,
                             teams: snapshot.teams,
+                            projectedPoints: (snapshot.pointProbabilities?.rows ?? [])
+                                .reduce(into: [String: Int]()) { values, row in
+                                    if row.prediction > 0 {
+                                        values[row.team.uppercased()] = row.prediction
+                                    }
+                                },
                             actualStandings: nhlStandings,
                             standingsLoading: nhlStandingsLoading,
                             standingsError: nhlStandingsError
@@ -344,6 +350,7 @@ private struct ModelPanelHeader: View {
 private struct PlayoffPicturePanel: View {
     let picture: ModelPlayoffPicture
     let teams: [ModelTeam]
+    let projectedPoints: [String: Int]
     let actualStandings: IceometricsNHLStandings?
     let standingsLoading: Bool
     let standingsError: String?
@@ -358,6 +365,7 @@ private struct PlayoffPicturePanel: View {
                             Text(mode.title).tag(mode)
                         }
                     }
+                    .labelsHidden()
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 560)
                     Spacer(minLength: 0)
@@ -369,7 +377,12 @@ private struct PlayoffPicturePanel: View {
                 if bracketMode == .nhl {
                     FullPlayoffBracketGraphic(picture: picture, teams: teams)
                 } else if let actualStandings {
-                    IceometricsSeededBracket(snapshot: actualStandings, mode: bracketMode, teams: teams)
+                    IceometricsSeededBracket(
+                        snapshot: actualStandings,
+                        mode: bracketMode,
+                        teams: teams,
+                        projectedPoints: projectedPoints
+                    )
                 } else if standingsLoading {
                     ProgressView("Loading NHL seedings…")
                 } else {
@@ -463,41 +476,46 @@ private enum IceometricsBracketMode: String, CaseIterable, Identifiable {
     }
 }
 
-// ICEOMETRICS_BLUE_MODELS_BRACKETS_20261018
-// Real current seeds are displayed at round one. Every future winner stays
-// deliberately blank; no projected outcomes are presented as official.
+// ICEOMETRICS_TWO_SIDED_PROJECTED_BRACKETS_20261018
+// NHL standings determine the initial seeds; projected season points determine
+// hypothetical winners in the alternative formats. These are NOT matchup odds.
 private struct IceometricsSeededBracket: View {
     let snapshot: IceometricsNHLStandings
     let mode: IceometricsBracketMode
     let teams: [ModelTeam]
+    let projectedPoints: [String: Int]
 
     private var pools: [(String, [IceometricsNHLStanding])] {
         switch mode {
-        case .nhl: return []
+        case .nhl:
+            return []
         case .conference:
-            return ["Eastern", "Western"].map { name in
-                (name, Array(snapshot.rows
-                    .filter { $0.conference == name }
+            return ["Eastern", "Western"].map { conference in
+                (conference, Array(snapshot.rows
+                    .filter { $0.conference == conference }
                     .sorted { $0.conferenceRank < $1.conferenceRank }
                     .prefix(8)))
             }
         case .league16:
             return [("League 1–16", Array(snapshot.rows.prefix(16)))]
         case .full32:
-            return [("Full 32-team bracket", Array(snapshot.rows.prefix(32)))]
+            return [("Full 32", Array(snapshot.rows.prefix(32)))]
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            Text("ACTUAL NHL standings seeds · Future winners TBD")
+        VStack(alignment: .leading, spacing: 13) {
+            Text("Official NHL seeds · Advancement based on MoneyPuck projected points, not head-to-head odds")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(pools.indices, id: \.self) { index in
                 let pool = pools[index]
                 if pool.1.count >= 8 {
-                    IceometricsSeededBracketBoard(
-                        title: pool.0, seeds: pool.1, teams: teams
+                    IceometricsProjectedBracketBoard(
+                        title: pool.0,
+                        seeds: pool.1,
+                        teams: teams,
+                        projectedPoints: projectedPoints
                     )
                 }
             }
@@ -506,103 +524,184 @@ private struct IceometricsSeededBracket: View {
     }
 }
 
-private struct IceometricsSeededBracketBoard: View {
+private struct IceometricsProjectedBracketBoard: View {
     let title: String
     let seeds: [IceometricsNHLStanding]
     let teams: [ModelTeam]
+    let projectedPoints: [String: Int]
 
-    private let verticalStep: CGFloat = 52
-    private let circleSize: CGFloat = 36
-    private var rounds: Int {
-        seeds.count >= 32 ? 5 : (seeds.count >= 16 ? 4 : 3)
+    private let nodeSize: CGFloat = 42
+    private let gapY: CGFloat = 52
+    private let topY: CGFloat = 34
+    private let outerX: CGFloat = 32
+
+    private var sideCount: Int { seeds.count / 2 }
+    private var levels: Int {
+        sideCount >= 16 ? 4 : (sideCount >= 8 ? 3 : 2)
     }
-    private var height: CGFloat {
-        CGFloat(seeds.count) * verticalStep + 55
+    private var boardHeight: CGFloat {
+        topY + CGFloat(sideCount) * gapY + 22
     }
-    private var firstRoundCodes: [String] {
-        guard seeds.count >= 2 else { return [] }
-        return (0..<(seeds.count / 2)).flatMap { index in
+    private var minimumBoardWidth: CGFloat {
+        CGFloat(levels + 1) * 220
+    }
+
+    // Seed by rank: #1 vs last, #2 vs next-to-last, and so on.
+    private var roundOne: [[String]] {
+        (0..<sideCount).map { index in
             [seeds[index].code, seeds[seeds.count - index - 1].code]
         }
     }
-    private func nodeY(round: Int, index: Int) -> CGFloat {
-        35 + (CGFloat(index) + 0.5) * verticalStep * CGFloat(1 << round)
+    private func predictedWinner(_ first: String, _ second: String) -> String {
+        guard !first.isEmpty, !second.isEmpty,
+              let a = projectedPoints[first.uppercased()],
+              let b = projectedPoints[second.uppercased()],
+              a > 0, b > 0, a != b else {
+            return ""
+        }
+        return a > b ? first : second
+    }
+    private func roundCodes(isLeft: Bool, round: Int) -> [String] {
+        let half = roundOne.count / 2
+        let selected = isLeft
+            ? Array(roundOne.prefix(half))
+            : Array(roundOne.suffix(half))
+        var codes = selected.flatMap { $0 }
+        guard round > 0 else { return codes }
+        for _ in 0..<round {
+            guard codes.count >= 2 else { return codes }
+            codes = stride(from: 0, to: codes.count - 1, by: 2).map {
+                predictedWinner(codes[$0], codes[$0 + 1])
+            }
+        }
+        return codes
+    }
+    private var championshipWinner: String {
+        predictedWinner(
+            roundCodes(isLeft: true, round: levels).first ?? "",
+            roundCodes(isLeft: false, round: levels).first ?? ""
+        )
+    }
+    private func yPosition(round: Int, index: Int) -> CGFloat {
+        topY + (CGFloat(index) + 0.5) *
+            CGFloat(1 << round) * gapY
+    }
+    private func xPosition(isLeft: Bool, round: Int, width: CGFloat) -> CGFloat {
+        let half = width / 2
+        let step = (half - outerX) / CGFloat(levels + 1)
+        let x = outerX + CGFloat(round) * step
+        return isLeft ? x : width - x
+    }
+    private var finalY: CGFloat {
+        yPosition(round: levels, index: 0)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.headline)
-            GeometryReader { proxy in
-                let left: CGFloat = 25
-                let usable = max(1, proxy.size.width - 2 * left)
-                let step = usable / CGFloat(rounds)
-                ZStack(alignment: .topLeading) {
-                    Canvas { context, _ in
-                        for round in 0..<rounds {
-                            let x0 = left + CGFloat(round) * step
-                            let x1 = x0 + step
-                            let elbow = x0 + step * 0.47
-                            let count = seeds.count >> (round + 1)
-                            for pair in 0..<count {
-                                let a = nodeY(round: round, index: pair * 2)
-                                let b = nodeY(round: round, index: pair * 2 + 1)
-                                let target = nodeY(round: round + 1, index: pair)
-                                var path = Path()
-                                path.move(to: CGPoint(x: x0 + circleSize / 2, y: a))
-                                path.addLine(to: CGPoint(x: elbow, y: a))
-                                path.addLine(to: CGPoint(x: elbow, y: b))
-                                path.addLine(to: CGPoint(x: x0 + circleSize / 2, y: b))
-                                path.move(to: CGPoint(x: elbow, y: (a + b) / 2))
-                                path.addLine(to: CGPoint(x: x1 - circleSize / 2, y: target))
-                                context.stroke(
-                                    path,
-                                    with: .color(Color.primary.opacity(0.25)),
-                                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
-                                )
-                            }
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.subheadline.weight(.semibold))
+            GeometryReader { viewport in
+                ScrollView(.horizontal, showsIndicators: true) {
+                    let width = max(viewport.size.width, minimumBoardWidth)
+                    ZStack(alignment: .topLeading) {
+                        Canvas { context, _ in
+                            drawConnections(context: &context, isLeft: true, width: width)
+                            drawConnections(context: &context, isLeft: false, width: width)
                         }
-                    }
-                    ForEach(0...rounds, id: \.self) { round in
-                        let x = left + CGFloat(round) * step
-                        Text(round == rounds ? "Winner" : "R\(round + 1)")
-                            .font(.caption2.weight(.semibold))
+                        bracketSide(isLeft: true, width: width)
+                        bracketSide(isLeft: false, width: width)
+                        Text("WINNER")
+                            .font(.caption2.bold())
                             .foregroundStyle(.secondary)
-                            .position(x: x, y: 10)
-                        ForEach(0..<(seeds.count >> round), id: \.self) { index in
-                            let code = round == 0 && firstRoundCodes.indices.contains(index)
-                                ? firstRoundCodes[index] : ""
-                            ZStack {
-                                Circle()
-                                    .fill(Color.primary.opacity(0.05))
-                                    .overlay {
-                                        Circle().stroke(
-                                            Color.primary.opacity(0.19),
-                                            lineWidth: 0.8
-                                        )
-                                    }
-                                if code.isEmpty {
-                                    Circle()
-                                        .fill(Color.secondary.opacity(0.35))
-                                        .frame(width: 5, height: 5)
-                                } else {
-                                    ModelTeamLogo(
-                                        team: teamForCode(code, teams: teams),
-                                        code: code,
-                                        size: circleSize - 4
-                                    )
-                                }
-                            }
-                            .frame(width: circleSize, height: circleSize)
-                            .position(x: x, y: nodeY(round: round, index: index))
-                            .accessibilityLabel(code.isEmpty ? "To be determined" : code)
-                        }
+                            .position(x: width / 2, y: 11)
+                        bracketTeam(championshipWinner)
+                            .position(x: width / 2, y: finalY)
                     }
+                    .frame(width: width, height: boardHeight)
                 }
             }
-            .frame(height: height)
+            .frame(height: boardHeight)
         }
-        .padding(11)
+        .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func bracketSide(isLeft: Bool, width: CGFloat) -> some View {
+        ForEach(0...levels, id: \.self) { round in
+            let x = xPosition(isLeft: isLeft, round: round, width: width)
+            let codes = roundCodes(isLeft: isLeft, round: round)
+            Text("R\(round + 1)")
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+                .position(x: x, y: 11)
+            ForEach(codes.indices, id: \.self) { index in
+                bracketTeam(codes[index])
+                    .position(x: x, y: yPosition(round: round, index: index))
+            }
+        }
+    }
+
+    private func bracketTeam(_ code: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.primary.opacity(0.06))
+            Circle()
+                .stroke(Color.primary.opacity(0.18), lineWidth: 0.8)
+            if code.isEmpty {
+                Text("–")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ModelTeamLogo(
+                    team: teamForCode(code, teams: teams),
+                    code: code,
+                    size: nodeSize - 3
+                )
+            }
+        }
+        .frame(width: nodeSize, height: nodeSize)
+        .accessibilityLabel(code.isEmpty ? "To be determined" : code)
+    }
+
+    private func drawConnections(
+        context: inout GraphicsContext,
+        isLeft: Bool,
+        width: CGFloat
+    ) {
+        let direction: CGFloat = isLeft ? 1 : -1
+        for round in 0..<levels {
+            let before = xPosition(isLeft: isLeft, round: round, width: width)
+            let after = xPosition(isLeft: isLeft, round: round + 1, width: width)
+            let fromX = before + direction * nodeSize / 2
+            let toX = after - direction * nodeSize / 2
+            let elbow = fromX + (toX - fromX) * 0.45
+            let sourceCount = roundCodes(isLeft: isLeft, round: round).count
+            for pair in 0..<(sourceCount / 2) {
+                let a = yPosition(round: round, index: pair * 2)
+                let b = yPosition(round: round, index: pair * 2 + 1)
+                let target = yPosition(round: round + 1, index: pair)
+                var path = Path()
+                path.move(to: CGPoint(x: fromX, y: a))
+                path.addLine(to: CGPoint(x: elbow, y: a))
+                path.addLine(to: CGPoint(x: elbow, y: b))
+                path.addLine(to: CGPoint(x: fromX, y: b))
+                path.move(to: CGPoint(x: elbow, y: (a + b) / 2))
+                path.addLine(to: CGPoint(x: toX, y: target))
+                context.stroke(path,
+                    with: .color(Color.primary.opacity(0.28)),
+                    style: StrokeStyle(lineWidth: 0.9, lineCap: .round)
+                )
+            }
+        }
+        // Each conference/half sends one finalist toward the centered winner.
+        let x = xPosition(isLeft: isLeft, round: levels, width: width)
+        var path = Path()
+        path.move(to: CGPoint(x: x + direction * nodeSize / 2, y: finalY))
+        path.addLine(to: CGPoint(x: width / 2 - direction * nodeSize / 2, y: finalY))
+        context.stroke(path,
+            with: .color(Color.primary.opacity(0.28)),
+            style: StrokeStyle(lineWidth: 1, lineCap: .round)
+        )
     }
 }
 
