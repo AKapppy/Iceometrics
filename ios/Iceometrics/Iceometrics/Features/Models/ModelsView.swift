@@ -662,96 +662,98 @@ private struct IceometricsSeededBracket: View {
 // The remaining ten clubs form a *continuous* Wild Card ranking from 1–10.
 // Rank uses the NHL's published conference and wildcard sequences, not
 // fabricated playoff placements.
+// ICEOMETRICS_STANDINGS_FOUR_DIVISIONS_20261018
+// Match the NOTES table: Pacific | Central | Atlantic | Metro,
+// with each conference's complete wildcard below, divisional tables
+// underneath, and league-wide standings on the right.
 private struct IceometricsActualStandingsPanel: View {
     let snapshot: IceometricsNHLStandings
     let teams: [ModelTeam]
-    private let grid = [GridItem(.adaptive(minimum: 190), spacing: 10)]
-    private let conferences = ["Eastern", "Western"]
-    private let divisions = ["Atlantic", "Metropolitan", "Central", "Pacific"]
 
-    var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 15) {
-                Text("Actual NHL standings · \(snapshot.date)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                // The Models tab already establishes the page title.
+    private let divisionOrder = [
+        "Pacific", "Central", "Atlantic", "Metropolitan"
+    ]
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 12) {
-                        conferencePanel("Eastern").frame(minWidth: 260)
-                        conferencePanel("Western").frame(minWidth: 260)
-                    }
-                    VStack(alignment: .leading, spacing: 12) {
-                        conferencePanel("Eastern")
-                        conferencePanel("Western")
-                    }
-                }
+    private func divisionRows(_ division: String) -> [IceometricsNHLStanding] {
+        snapshot.rows.filter { $0.division == division }
+            .sorted { $0.divisionRank < $1.divisionRank }
+    }
 
-                Text("League").font(.headline)
-                IceometricsCompactStandingTable(
-                    title: "League 1–32",
-                    rows: snapshot.rows,
-                    firstRank: 1,
-                    teams: teams
-                )
-                Text("Division Standings").font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(divisions, id: \.self) { division in
-                        IceometricsCompactStandingTable(
-                            title: division,
-                            rows: snapshot.rows
-                                .filter { $0.division == division }
-                                .sorted { $0.divisionRank < $1.divisionRank },
-                            firstRank: 1,
-                            teams: teams
-                        )
-                    }
-                }
+    private func remainingRows(_ conference: String) -> [IceometricsNHLStanding] {
+        snapshot.rows.filter {
+            $0.conference == conference && $0.divisionRank > 3
+        }.sorted { a, b in
+            if a.wildcardRank > 0 && b.wildcardRank > 0 &&
+                a.wildcardRank != b.wildcardRank {
+                return a.wildcardRank < b.wildcardRank
             }
-            .padding(.bottom, 16)
+            if a.points != b.points { return a.points > b.points }
+            return a.conferenceRank < b.conferenceRank
         }
     }
 
-    private func conferencePanel(_ conference: String) -> some View {
-        let relevant = snapshot.rows.filter { $0.conference == conference }
-        let divisionNames: [String] = conference == "Eastern"
-            ? ["Atlantic", "Metropolitan"] : ["Central", "Pacific"]
-        let remaining = relevant.filter { $0.divisionRank > 3 }
-            .sorted { a, b in
-                if a.wildcardRank > 0 && b.wildcardRank > 0
-                    && a.wildcardRank != b.wildcardRank {
-                    return a.wildcardRank < b.wildcardRank
-                }
-                if a.points != b.points { return a.points > b.points }
-                return a.conferenceRank < b.conferenceRank
-            }
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(conference + " Conference")
-                .font(.subheadline.bold())
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(divisionNames, id: \.self) { division in
-                    IceometricsCompactStandingTable(
-                        title: division,
-                        rows: relevant.filter {
-                            $0.division == division && $0.divisionRank <= 3
+    var body: some View {
+        ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Division leaders")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(divisionOrder, id: \.self) { division in
+                            IceometricsCompactStandingTable(
+                                title: division == "Metropolitan" ? "Metro" : division,
+                                rows: Array(divisionRows(division).prefix(3)),
+                                firstRank: 1,
+                                teams: teams
+                            )
                         }
-                        .sorted { $0.divisionRank < $1.divisionRank },
-                        firstRank: 1,
-                        teams: teams
-                    )
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+
+                    HStack(alignment: .top, spacing: 8) {
+                        IceometricsCompactStandingTable(
+                            title: "Western Wildcard",
+                            rows: remainingRows("Western"),
+                            firstRank: 1,
+                            teams: teams,
+                            wildCard: true,
+                            width: 256
+                        )
+                        IceometricsCompactStandingTable(
+                            title: "Eastern Wildcard",
+                            rows: remainingRows("Eastern"),
+                            firstRank: 1,
+                            teams: teams,
+                            wildCard: true,
+                            width: 256
+                        )
+                    }
+
+                    Text("Divisions")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(divisionOrder, id: \.self) { division in
+                            IceometricsCompactStandingTable(
+                                title: division == "Metropolitan" ? "Metro" : division,
+                                rows: divisionRows(division),
+                                firstRank: 1,
+                                teams: teams
+                            )
+                        }
+                    }
                 }
+                IceometricsCompactStandingTable(
+                    title: "League",
+                    rows: snapshot.rows.sorted { $0.leagueRank < $1.leagueRank },
+                    firstRank: 1,
+                    teams: teams,
+                    width: 132
+                )
             }
-            IceometricsCompactStandingTable(
-                title: "Wild Card 1–\(remaining.count)",
-                rows: remaining,
-                firstRank: 1,
-                teams: teams,
-                wildCard: true
-            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 6)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -761,6 +763,7 @@ private struct IceometricsCompactStandingTable: View {
     let firstRank: Int
     let teams: [ModelTeam]
     var wildCard = false
+    var width: CGFloat = 124
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -809,7 +812,7 @@ private struct IceometricsCompactStandingTable: View {
             }
         }
         .padding(.bottom, 7)
-        .frame(width: 174, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
     }
 }
