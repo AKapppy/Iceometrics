@@ -710,24 +710,31 @@ private struct IceometricsActualStandingsPanel: View {
                         }
                     }
 
-                    HStack(alignment: .top, spacing: 8) {
+                    // One continuous surface for both conferences' wildcard race.
+                    HStack(alignment: .top, spacing: 0) {
                         IceometricsCompactStandingTable(
                             title: "Western Wildcard",
                             rows: remainingRows("Western"),
                             firstRank: 1,
                             teams: teams,
                             wildCard: true,
-                            width: 256
+                            width: 280,
+                            unifiedSurface: true
                         )
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.16))
+                            .frame(width: 1)
                         IceometricsCompactStandingTable(
                             title: "Eastern Wildcard",
                             rows: remainingRows("Eastern"),
                             firstRank: 1,
                             teams: teams,
                             wildCard: true,
-                            width: 256
+                            width: 280,
+                            unifiedSurface: true
                         )
                     }
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
 
                     Text("Divisions")
                         .font(.caption.bold())
@@ -748,7 +755,7 @@ private struct IceometricsActualStandingsPanel: View {
                     rows: snapshot.rows.sorted { $0.leagueRank < $1.leagueRank },
                     firstRank: 1,
                     teams: teams,
-                    width: 132
+                    width: 156
                 )
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -763,7 +770,8 @@ private struct IceometricsCompactStandingTable: View {
     let firstRank: Int
     let teams: [ModelTeam]
     var wildCard = false
-    var width: CGFloat = 124
+    var width: CGFloat = 150
+    var unifiedSurface = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -793,8 +801,12 @@ private struct IceometricsCompactStandingTable: View {
                         code: team.code,
                         size: 22
                     )
-                    .frame(width: 29, alignment: .leading)
+                    .frame(width: 24, alignment: .leading)
                     .accessibilityLabel(team.name.isEmpty ? team.code : team.name)
+                    Text(team.code)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.80)
                     Spacer(minLength: 0)
                     Text(String(team.points))
                         .fontWeight(.semibold)
@@ -813,7 +825,12 @@ private struct IceometricsCompactStandingTable: View {
         }
         .padding(.bottom, 7)
         .frame(width: width, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
+        .background {
+            if !unifiedSurface {
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(.thinMaterial)
+            }
+        }
     }
 }
 
