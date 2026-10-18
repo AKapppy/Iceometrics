@@ -1744,6 +1744,17 @@ private struct IceometricsDocSmartCard: View {
 
                 if expanded {
                     VStack(spacing: min(18, max(8, cardHeight * 0.022))) {
+                        // Reuse the already-loaded NHL gamecenter boxscore.
+                        // Show no predicted names or synthetic starter labels.
+                        if let detail = expandedDetail,
+                           detail.awayGoalie != nil || detail.homeGoalie != nil {
+                            comparisonDetail(
+                                title: "NHL STARTERS",
+                                away: detail.awayGoalie?.name ?? "—",
+                                home: detail.homeGoalie?.name ?? "—",
+                                fontSize: detailFontSize * 0.84
+                            )
+                        }
                         if game.status == .scheduled, let detail = expandedDetail {
                             let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
                             let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
