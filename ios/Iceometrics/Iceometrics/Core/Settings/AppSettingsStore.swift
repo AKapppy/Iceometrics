@@ -370,12 +370,28 @@ enum TeamPerformancePalette {
         "WSH": (good: "#041E42", bad: "#C8102E"),
     ]
 
+    // Predictions use the team's two real palette colors. Order by
+    // perceived brightness so zero always starts on the darker shade.
     static func predictionBarColors(teamCode: String, fallbackHex: String) -> [Color] {
         let pair = nhl[teamCode.uppercased()]
+        let first = pair?.good ?? fallbackHex
+        let second = pair?.bad ?? fallbackHex
+        let darkFirst = luminance(first) <= luminance(second)
         return [
-            Color(hex: pair?.good ?? fallbackHex, fallback: .accentColor),
-            Color(hex: pair?.bad ?? fallbackHex, fallback: .accentColor)
+            Color(hex: darkFirst ? first : second, fallback: .accentColor),
+            Color(hex: darkFirst ? second : first, fallback: .accentColor)
         ]
+    }
+
+    private static func luminance(_ hex: String) -> Double {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard let value = UInt64(cleaned, radix: 16), cleaned.count == 6 else {
+            return 0
+        }
+        let red = Double((value >> 16) & 0xFF)
+        let green = Double((value >> 8) & 0xFF)
+        let blue = Double(value & 0xFF)
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
     }
 
     private struct RGB {
