@@ -381,36 +381,6 @@ private struct PredictionMetricPanel: View {
         min(max(0, focusedColumnIndex ?? todayIndex), max(0, table.columns.count - 1))
     }
 
-    private var dateScrubber: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "calendar")
-                .foregroundStyle(.secondary)
-            Slider(
-                value: Binding(
-                    get: { Double(displayColumnIndex) },
-                    set: {
-                        let selected = Int($0.rounded())
-                        focusedColumnIndex = selected
-                        jumpColumnIndex = selected
-                    }
-                ),
-                in: 0...Double(max(1, table.columns.count - 1)),
-                step: 1
-            )
-            .accessibilityLabel("Prediction date")
-            Text(displayPredictionDate(table.columns[displayColumnIndex], season: season))
-                .font(.caption.monospacedDigit())
-                .frame(minWidth: 63, alignment: .trailing)
-            Button("Today") {
-                focusedColumnIndex = todayIndex
-                jumpColumnIndex = todayIndex
-            }
-                .font(.caption)
-                .disabled(focusedColumnIndex == nil || displayColumnIndex == todayIndex)
-        }
-        .padding(.horizontal, 4)
-    }
-
     private var yDomain: (Double, Double) {
         // Prediction charts always start at zero, but only climb to 100%
         // when the leading team is actually near that ceiling.
@@ -532,8 +502,6 @@ private struct PredictionMetricPanel: View {
                     .controlSize(.small)
                 }
 }
-
-            if table.columns.count > 1 { dateScrubber }
 
             AlignedTimelineGraph(
                 labels: table.columns.map {
@@ -682,18 +650,30 @@ private struct PredictionSpreadsheet: View {
                         HStack(spacing: 7) {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 2)
+                                    Rectangle()
                                         .fill(Color.primary.opacity(0.085))
-                                    if let value {
-                                        RoundedRectangle(cornerRadius: 2)
+                                    if let value, value.isFinite {
+                                        // Keep the gradient on the full track,
+                                        // then clip to probability. Small values
+                                        // therefore use only the dark end.
+                                        Rectangle()
                                             .fill(
                                                 LinearGradient(
-                                                    colors: TeamPerformancePalette.predictionBarColors(teamCode: team.code, fallbackHex: team.colorHex),
+                                                    colors: TeamPerformancePalette.predictionBarColors(
+                                                        teamCode: team.code,
+                                                        fallbackHex: team.colorHex
+                                                    ),
                                                     startPoint: .leading,
                                                     endPoint: .trailing
                                                 )
                                             )
-                                            .frame(width: max(0, geo.size.width * CGFloat(min(1, max(0, value)))))
+                                            .frame(width: geo.size.width)
+                                            .frame(
+                                                width: max(0, geo.size.width *
+                                                    CGFloat(min(1, max(0, value)))),
+                                                alignment: .leading
+                                            )
+                                            .clipped()
                                     }
                                 }
                             }
