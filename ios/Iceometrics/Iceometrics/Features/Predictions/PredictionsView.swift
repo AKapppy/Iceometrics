@@ -471,8 +471,7 @@ private struct PredictionMetricPanel: View {
             selectedTeamCode = team.code
         } label: {
             VStack(spacing: 2) {
-                PredictionTeamLogo(team: team)
-                    .frame(width: size, height: size)
+                PredictionTeamLogo(team: team, size: size)
                 Text(team.code)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -1097,6 +1096,7 @@ private func displayPredictionDate(
 
 private struct PredictionTeamLogo: View {
     let team: PredictionTeam
+    var size: CGFloat = 28
 
     var body: some View {
         AsyncImage(url: team.logoURL) { phase in
@@ -1115,7 +1115,7 @@ private struct PredictionTeamLogo: View {
                 EmptyView()
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: size, height: size)
     }
 
 }
