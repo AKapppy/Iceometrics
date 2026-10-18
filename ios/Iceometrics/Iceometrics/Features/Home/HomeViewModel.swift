@@ -174,6 +174,13 @@ final class HomeViewModel: ObservableObject {
                     to: currentGame
                 )
 
+                // An occasional stale NHL response must never revert an
+                // in-progress or finished game to its scheduled state.
+                guard Self.acceptsStatusTransition(
+                    from: currentGame.status,
+                    to: updatedGame.status
+                ) else { continue }
+
                 guard updatedGame != currentGame else {
                     continue
                 }
@@ -215,9 +222,29 @@ final class HomeViewModel: ObservableObject {
                 forceRefresh: forceRefresh
             )
 
+            // Keep the last confirmed live/final overlay while the
+            // full-season export is replaced. That export can lag NHL's
+            // game-by-game feed, including by several minutes at game end.
+            // Rebuild and reconcile synchronously on the main actor so the
+            // user never sees a momentary return to the scheduled puck drop.
+            let previousOverrides = liveGameOverrides
             rebuildGameIndex(from: result.snapshot)
-            liveGameOverrides = [:]
-            liveUpdatedAt = nil
+            var retained: [String: HockeyGame] = [:]
+            for gamesOnDay in baseGamesByDay.values {
+                for baseGame in gamesOnDay {
+                    guard let earlier = previousOverrides[baseGame.id],
+                          earlier.awayTeam.abbreviation == baseGame.awayTeam.abbreviation,
+                          earlier.homeTeam.abbreviation == baseGame.homeTeam.abbreviation,
+                          earlier.startTime == baseGame.startTime,
+                          !Self.acceptsStatusTransition(
+                              from: earlier.status,
+                              to: baseGame.status
+                          ) else { continue }
+                    retained[baseGame.id] = earlier
+                }
+            }
+            liveGameOverrides = retained
+            if retained.isEmpty { liveUpdatedAt = nil }
 
             snapshot = result.snapshot
             origin = result.origin
@@ -237,6 +264,22 @@ final class HomeViewModel: ObservableObject {
                 (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
             )
+        }
+    }
+
+    /// NHL game status advances in one direction within an individual game.
+    /// A slower season export or stale live response cannot roll it backward.
+    private static func acceptsStatusTransition(
+        from prior: GameStatus,
+        to incoming: GameStatus
+    ) -> Bool {
+        switch prior {
+        case .final:
+            return incoming == .final
+        case .live:
+            return incoming == .live || incoming == .final
+        case .scheduled, .unknown, .postponed:
+            return true
         }
     }
 
