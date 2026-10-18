@@ -321,10 +321,8 @@ private struct ModelPanelHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.title2.bold())
-
-            Spacer()
+            // The Models tab already names the content; keep only context.
+            Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(displayModelDay(day))
