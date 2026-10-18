@@ -129,7 +129,7 @@ struct ModelsView: View {
 
                 case .standings:
                     if let nhlStandings {
-                        IceometricsActualStandingsPanel(snapshot: nhlStandings)
+                        IceometricsActualStandingsPanel(snapshot: nhlStandings, teams: snapshot.teams)
                     } else if nhlStandingsLoading {
                         ProgressView("Loading NHL standings…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -664,6 +664,7 @@ private struct IceometricsSeededBracket: View {
 // fabricated playoff placements.
 private struct IceometricsActualStandingsPanel: View {
     let snapshot: IceometricsNHLStandings
+    let teams: [ModelTeam]
     private let grid = [GridItem(.adaptive(minimum: 190), spacing: 10)]
     private let conferences = ["Eastern", "Western"]
     private let divisions = ["Atlantic", "Metropolitan", "Central", "Pacific"]
@@ -691,7 +692,8 @@ private struct IceometricsActualStandingsPanel: View {
                 IceometricsCompactStandingTable(
                     title: "League 1–32",
                     rows: snapshot.rows,
-                    firstRank: 1
+                    firstRank: 1,
+                    teams: teams
                 )
                 Text("Division Standings").font(.headline)
                 LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
@@ -701,7 +703,8 @@ private struct IceometricsActualStandingsPanel: View {
                             rows: snapshot.rows
                                 .filter { $0.division == division }
                                 .sorted { $0.divisionRank < $1.divisionRank },
-                            firstRank: 1
+                            firstRank: 1,
+                            teams: teams
                         )
                     }
                 }
@@ -734,7 +737,8 @@ private struct IceometricsActualStandingsPanel: View {
                             $0.division == division && $0.divisionRank <= 3
                         }
                         .sorted { $0.divisionRank < $1.divisionRank },
-                        firstRank: 1
+                        firstRank: 1,
+                        teams: teams
                     )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
@@ -743,6 +747,7 @@ private struct IceometricsActualStandingsPanel: View {
                 title: "Wild Card 1–\(remaining.count)",
                 rows: remaining,
                 firstRank: 1,
+                teams: teams,
                 wildCard: true
             )
         }
@@ -754,6 +759,7 @@ private struct IceometricsCompactStandingTable: View {
     let title: String
     let rows: [IceometricsNHLStanding]
     let firstRank: Int
+    let teams: [ModelTeam]
     var wildCard = false
 
     var body: some View {
@@ -779,8 +785,13 @@ private struct IceometricsCompactStandingTable: View {
                     Text(String(firstRank + index))
                         .frame(width: 20, alignment: .trailing)
                         .foregroundStyle(.secondary)
-                    Text(team.code)
-                        .fontWeight(wildCard && index < 2 ? .bold : .regular)
+                    ModelTeamLogo(
+                        team: teamForCode(team.code, teams: teams),
+                        code: team.code,
+                        size: 22
+                    )
+                    .frame(width: 29, alignment: .leading)
+                    .accessibilityLabel(team.name.isEmpty ? team.code : team.name)
                     Spacer(minLength: 0)
                     Text(String(team.points))
                         .fontWeight(.semibold)
