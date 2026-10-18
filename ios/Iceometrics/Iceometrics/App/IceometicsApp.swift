@@ -137,6 +137,8 @@ final class WidgetSnapshotCoordinator {
     private let seasonPredictionService = PredictionDataService()
 
     private var pendingTask: Task<Void, Never>?
+    private var cachedGamePredictions: [String: MoneyPuckGamePrediction] = [:]
+    private var lastPredictionFetch: [String: Date] = [:]
 
     private init() {}
 
@@ -186,18 +188,35 @@ final class WidgetSnapshotCoordinator {
         async let predictionSnapshotTask =
             fetchPredictionSnapshot()
 
-        // Only today's NHL games need live/pregame MoneyPuck data.
-        // The full season remains in the shared snapshot so Team Game can
-        // locate each club's next game, but we do not make network requests
-        // for every date in the season.
+        // The Team Game widget may show a club's NEXT matchup rather
+        // than today's slate. Include the nearest upcoming matchup for
+        // each NHL club, but not the entire season's predictions.
         let todaysGames = nhlGames.filter {
             Self.isToday($0.startTime)
         }
+        let futureGames = nhlGames.filter {
+            $0.status == .scheduled && $0.startTime > Date()
+        }
+        var coveredTeams = Set<String>()
+        var nextTeamGames: [HockeyGame] = []
+        for game in futureGames {
+            let away = game.awayTeam.abbreviation.uppercased()
+            let home = game.homeTeam.abbreviation.uppercased()
+            if !coveredTeams.contains(away) || !coveredTeams.contains(home) {
+                nextTeamGames.append(game)
+            }
+            coveredTeams.insert(away)
+            coveredTeams.insert(home)
+            if coveredTeams.count >= 32 { break }
+        }
+        var selectedIDs = Set<String>()
+        let predictionGames = (todaysGames + nextTeamGames).filter {
+            selectedIDs.insert($0.id).inserted
+        }
 
-        let gamePredictions =
-            await fetchGamePredictions(
-                games: todaysGames
-            )
+        let gamePredictions = await fetchGamePredictions(
+            games: predictionGames
+        )
 
         let predictionSnapshot =
             await predictionSnapshotTask
@@ -281,40 +300,47 @@ final class WidgetSnapshotCoordinator {
     private func fetchGamePredictions(
         games: [HockeyGame]
     ) async -> [String: MoneyPuckGamePrediction] {
-        let candidates = games.filter { game in
-            game.status == .scheduled
-                || game.status == .live
+        let candidates = games.filter {
+            $0.status == .scheduled || $0.status == .live
         }
-
-        let grouped = Dictionary(
-            grouping: candidates
-        ) { game in
-            Self.dayKey(game.startTime)
+        let now = Date()
+        var result: [String: MoneyPuckGamePrediction] = [:]
+        let due = candidates.filter { game in
+            let cacheAge = lastPredictionFetch[game.id].map {
+                now.timeIntervalSince($0)
+            } ?? Double.infinity
+            let refreshWindow: TimeInterval =
+                game.status == .live ? 60 : 30 * 60
+            if cacheAge < refreshWindow,
+               let cached = cachedGamePredictions[game.id] {
+                result[game.id] = cached
+                return false
+            }
+            return true
         }
-
-        var result:
-            [String: MoneyPuckGamePrediction] = [:]
-
+        let grouped = Dictionary(grouping: due) {
+            Self.dayKey($0.startTime)
+        }
         for (_, dayGames) in grouped {
-            guard let date = dayGames.first?.startTime else {
-                continue
-            }
-
+            guard let date = dayGames.first?.startTime else { continue }
             do {
-                let values = try await predictionService
-                    .fetchPredictions(
-                        for: date,
-                        games: dayGames
-                    )
-
-                result.merge(values) { _, new in
-                    new
+                let values = try await predictionService.fetchPredictions(
+                    for: date, games: dayGames
+                )
+                for (id, prediction) in values {
+                    cachedGamePredictions[id] = prediction
+                    lastPredictionFetch[id] = now
                 }
+                result.merge(values) { _, newer in newer }
             } catch {
-                continue
+                // Keep a previous legitimate MoneyPuck result if available.
+                for game in dayGames {
+                    if let cached = cachedGamePredictions[game.id] {
+                        result[game.id] = cached
+                    }
+                }
             }
         }
-
         return result
     }
 
