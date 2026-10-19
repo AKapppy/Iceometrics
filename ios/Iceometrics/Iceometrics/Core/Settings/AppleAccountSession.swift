@@ -1,6 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 import Security
+import WidgetKit
 
 // The signed-in Apple user identifier is stored only in Keychain.
 // The credential is revalidated on each launch before the app unlocks.
@@ -30,6 +31,7 @@ final class AppleAccountSession: ObservableObject {
     func verifySavedCredential() {
         guard let savedID = readSavedUserID() else {
             userID = nil
+            updateWidgetAccess(false)
             isChecking = false
             return
         }
@@ -42,14 +44,17 @@ final class AppleAccountSession: ObservableObject {
                 case .authorized:
                     self.errorMessage = nil
                     self.userID = savedID
+                    self.updateWidgetAccess(true)
                 case .revoked, .notFound:
                     self.deleteSavedUserID()
                     self.userID = nil
+                    self.updateWidgetAccess(false)
                     self.errorMessage = "Your Apple authorization needs to be renewed."
                 default:
                     // Fail closed: an unknown/unverified credential may not
                     // unlock an account. The user can sign in explicitly.
                     self.userID = nil
+                    self.updateWidgetAccess(false)
                     if error != nil {
                         self.errorMessage = "Could not verify the saved Apple sign-in. Sign in again."
                     }
@@ -73,6 +78,7 @@ final class AppleAccountSession: ObservableObject {
             errorMessage = nil
             isChecking = false
             userID = credential.user
+            updateWidgetAccess(true)
         case .failure(let error):
             let nsError = error as NSError
             if nsError.domain == ASAuthorizationError.errorDomain,
@@ -88,8 +94,23 @@ final class AppleAccountSession: ObservableObject {
         // Iceometrics' own remembered session, and locks every app tab.
         deleteSavedUserID()
         userID = nil
+        updateWidgetAccess(false)
         errorMessage = nil
         isChecking = false
+    }
+
+    private func updateWidgetAccess(_ authorized: Bool) {
+        UserDefaults(suiteName: "group.com.akappy.Iceometrics")?
+            .set(authorized, forKey: "iceometrics.account.authorized")
+        if !authorized,
+           let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.akappy.Iceometrics"
+           ) {
+            try? FileManager.default.removeItem(
+                at: container.appendingPathComponent("widget-snapshot.json")
+            )
+        }
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func readSavedUserID() -> String? {
