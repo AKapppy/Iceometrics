@@ -102,8 +102,10 @@ final class AppleAccountSession: ObservableObject {
     private func updateWidgetAccess(_ authorized: Bool) {
         UserDefaults(suiteName: "group.com.akappy.Iceometrics")?
             .set(authorized, forKey: "iceometrics.account.authorized")
-        if !authorized,
-           let container = FileManager.default.containerURL(
+        // Always discard a previously installed widget snapshot before
+        // switching into or out of an account. A different Apple identity
+        // must never briefly see another user's favorite-team data.
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.akappy.Iceometrics"
            ) {
             try? FileManager.default.removeItem(
