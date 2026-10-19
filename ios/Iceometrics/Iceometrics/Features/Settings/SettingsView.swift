@@ -156,6 +156,9 @@ struct SettingsView: View {
                 Text("Settings remain saved on this device when offline. iCloud updates may take a little time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Use This Device's Settings on iCloud") {
+                    showingSyncConfirmation = true
+                }
             }
 
             Section {
