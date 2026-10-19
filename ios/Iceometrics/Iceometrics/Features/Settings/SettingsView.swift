@@ -172,6 +172,18 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .confirmationDialog(
+            "Use this device's settings on other Apple devices?",
+            isPresented: $showingSyncConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Upload Settings") {
+                settings.uploadSettingsFromThisDevice()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("These settings may replace previously synced choices on your other devices.")
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {
