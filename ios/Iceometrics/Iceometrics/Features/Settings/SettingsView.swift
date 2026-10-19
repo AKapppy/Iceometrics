@@ -7,7 +7,8 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var customColor: Color
-    @State private var showingSyncConfirmation = false
+    @EnvironmentObject private var accountSession: AppleAccountSession
+    @State private var showingSignOutConfirmation = false
 
     init(
         settings: AppSettingsStore,
@@ -147,17 +148,16 @@ struct SettingsView: View {
                 }
             }
 
-            Section("iCloud Settings Sync") {
-                Label("Sync across Apple devices", systemImage: "icloud")
-                    .font(.subheadline.weight(.medium))
-                Text("Favorite team, appearance, accent color, season, predictions, and visible leagues sync between your Mac, iPhone, and iPad when iCloud is available and they use the same Apple Account.")
+            Section("Apple Account") {
+                Label("Signed in with Apple", systemImage: "person.crop.circle.badge.checkmark")
+                Text("Your favorite team and other preferences are saved separately for this Apple sign-in. When the same account is used for both Sign in with Apple and iCloud, they can sync between your devices.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Settings remain saved on this device when offline. iCloud updates may take a little time.")
+                Text("Existing preferences from older Iceometrics builds are not imported automatically.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Use This Device's Settings on iCloud") {
-                    showingSyncConfirmation = true
+                Button("Sign Out", role: .destructive) {
+                    showingSignOutConfirmation = true
                 }
             }
 
@@ -173,16 +173,17 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .confirmationDialog(
-            "Use this device's settings on other Apple devices?",
-            isPresented: $showingSyncConfirmation,
+            "Sign out of Iceometrics?",
+            isPresented: $showingSignOutConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Upload Settings") {
-                settings.uploadSettingsFromThisDevice()
+            Button("Sign Out", role: .destructive) {
+                dismiss()
+                accountSession.signOut()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("These settings may replace previously synced choices on your other devices.")
+            Text("Iceometrics will lock. Saved preferences for this account will remain available the next time you sign in.")
         }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
