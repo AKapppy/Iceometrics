@@ -162,7 +162,6 @@ final class AppSettingsStore: ObservableObject {
     private var cloudBootstrapComplete = false
     private var isApplyingCloudValues = false
     private var editedBeforeCloudBootstrap = Set<String>()
-    private var skipAutomaticCloudSeeding = false
 
     // A custom UserDefaults store used in tests stays entirely local by
     // default. AppSettingsStore() uses iCloud when its entitlement is active.
@@ -249,7 +248,6 @@ final class AppSettingsStore: ObservableObject {
         if reason == NSUbiquitousKeyValueStoreAccountChange {
             // Do not silently upload the previous account's preferences into
             // a newly signed-in iCloud account.
-            skipAutomaticCloudSeeding = true
             editedBeforeCloudBootstrap.removeAll()
         }
         let changed = Set(keys ?? Keys.synced)
@@ -264,11 +262,9 @@ final class AppSettingsStore: ObservableObject {
         applyICloudValues(keys: Keys.synced)
         cloudBootstrapComplete = true
 
-        for key in Keys.synced {
-            let explicitlyEdited = editedBeforeCloudBootstrap.contains(key)
-            let cloudMissing = cloudStore.object(forKey: key) == nil
-            guard explicitlyEdited || (cloudMissing && !skipAutomaticCloudSeeding)
-            else { continue }
+        // Publish only explicit local edits. Incoming cloud settings win
+        // over untouched defaults, even when the first download is delayed.
+        for key in editedBeforeCloudBootstrap {
             if let value = valueForICloud(key) {
                 cloudStore.set(value, forKey: key)
             }
