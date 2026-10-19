@@ -250,7 +250,12 @@ final class AppSettingsStore: ObservableObject {
             // a newly signed-in iCloud account.
             editedBeforeCloudBootstrap.removeAll()
         }
-        let changed = Set(keys ?? Keys.synced)
+        let changed: Set<String>
+        if let keys {
+            changed = Set(keys)
+        } else {
+            changed = Keys.synced
+        }
         applyICloudValues(keys: changed)
 
         // With late initial downloads, existing cloud values win unless this
