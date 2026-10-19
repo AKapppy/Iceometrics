@@ -275,6 +275,9 @@
 							com.apple.iCloud = {
 								enabled = 1;
 							};
+							com.apple.SignInWithApple = {
+								enabled = 1;
+							};
 						};
 					};
 					089E0290306955EC00941B29 = {
