@@ -104,30 +104,35 @@ final class AppSettingsStore: ObservableObject {
             } else {
                 defaults.removeObject(forKey: Keys.favoriteTeamID)
             }
+            publishToICloud(Keys.favoriteTeamID)
         }
     }
 
     @Published var accentMode: AppAccentMode {
         didSet {
             defaults.set(accentMode.rawValue, forKey: Keys.accentMode)
+            publishToICloud(Keys.accentMode)
         }
     }
 
     @Published var customAccentHex: String {
         didSet {
             defaults.set(customAccentHex, forKey: Keys.customAccentHex)
+            publishToICloud(Keys.customAccentHex)
         }
     }
 
     @Published var appearance: AppAppearance {
         didSet {
             defaults.set(appearance.rawValue, forKey: Keys.appearance)
+            publishToICloud(Keys.appearance)
         }
     }
 
     @Published var selectedSeason: String {
         didSet {
             defaults.set(selectedSeason, forKey: Keys.selectedSeason)
+            publishToICloud(Keys.selectedSeason)
         }
     }
 
@@ -137,6 +142,7 @@ final class AppSettingsStore: ObservableObject {
                 showPregamePredictions,
                 forKey: Keys.showPregamePredictions
             )
+            publishToICloud(Keys.showPregamePredictions)
         }
     }
 
@@ -146,13 +152,24 @@ final class AppSettingsStore: ObservableObject {
                 Array(hiddenCompetitionIDs).sorted(),
                 forKey: Keys.hiddenCompetitionIDs
             )
+            publishToICloud(Keys.hiddenCompetitionIDs)
         }
     }
 
     private let defaults: UserDefaults
+    private let cloudStore: NSUbiquitousKeyValueStore?
+    private var cloudObserver: NSObjectProtocol?
+    private var cloudBootstrapComplete = false
+    private var isApplyingCloudValues = false
+    private var editedBeforeCloudBootstrap = Set<String>()
+    private var skipAutomaticCloudSeeding = false
 
-    init(defaults: UserDefaults = .standard) {
+    // A custom UserDefaults store used in tests stays entirely local by
+    // default. AppSettingsStore() uses iCloud when its entitlement is active.
+    init(defaults: UserDefaults = .standard, syncWithICloud: Bool? = nil) {
         self.defaults = defaults
+        let useICloud = syncWithICloud ?? (defaults === UserDefaults.standard)
+        self.cloudStore = useICloud ? NSUbiquitousKeyValueStore.default : nil
         favoriteTeamID = defaults.string(forKey: Keys.favoriteTeamID)
 
         accentMode = AppAccentMode(
@@ -188,6 +205,162 @@ final class AppSettingsStore: ObservableObject {
                 forKey: Keys.hiddenCompetitionIDs
             ) ?? []
         )
+
+        startICloudSync()
+    }
+
+    // Local settings always work, including offline and on a device without
+    // iCloud. Never touch KVS from a widget extension or a preview/test store.
+    private func startICloudSync() {
+        guard let cloudStore else { return }
+
+        cloudObserver = NotificationCenter.default.addObserver(
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: cloudStore,
+            queue: .main
+        ) { [weak self] notification in
+            let changed = notification.userInfo?[
+                NSUbiquitousKeyValueStoreChangedKeysKey
+            ] as? [String]
+            let reason = (notification.userInfo?[
+                NSUbiquitousKeyValueStoreChangeReasonKey
+            ] as? NSNumber)?.intValue
+
+            Task { @MainActor [weak self] in
+                self?.receiveICloudChanges(keys: changed, reason: reason)
+            }
+        }
+
+        // Request the cached cloud snapshot before exporting local defaults.
+        // Apple may deliver an initial download asynchronously after this call.
+        cloudStore.synchronize()
+        applyICloudValues(keys: Keys.synced)
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            self?.finishICloudBootstrap()
+        }
+    }
+
+    private func receiveICloudChanges(keys: [String]?, reason: Int?) {
+        if reason == NSUbiquitousKeyValueStoreQuotaViolationChange {
+            return
+        }
+        if reason == NSUbiquitousKeyValueStoreAccountChange {
+            // Do not silently upload the previous account's preferences into
+            // a newly signed-in iCloud account.
+            skipAutomaticCloudSeeding = true
+            editedBeforeCloudBootstrap.removeAll()
+        }
+        let changed = Set(keys ?? Keys.synced)
+        applyICloudValues(keys: changed)
+
+        // With late initial downloads, existing cloud values win unless this
+        // device has an explicit in-session edit still waiting to be uploaded.
+    }
+
+    private func finishICloudBootstrap() {
+        guard let cloudStore, !cloudBootstrapComplete else { return }
+        applyICloudValues(keys: Keys.synced)
+        cloudBootstrapComplete = true
+
+        for key in Keys.synced {
+            let explicitlyEdited = editedBeforeCloudBootstrap.contains(key)
+            let cloudMissing = cloudStore.object(forKey: key) == nil
+            guard explicitlyEdited || (cloudMissing && !skipAutomaticCloudSeeding)
+            else { continue }
+            if let value = valueForICloud(key) {
+                cloudStore.set(value, forKey: key)
+            }
+        }
+        editedBeforeCloudBootstrap.removeAll()
+    }
+
+    private func publishToICloud(_ key: String) {
+        guard let cloudStore, !isApplyingCloudValues else { return }
+        guard cloudBootstrapComplete else {
+            editedBeforeCloudBootstrap.insert(key)
+            return
+        }
+        if let value = valueForICloud(key) {
+            cloudStore.set(value, forKey: key)
+        }
+    }
+
+    private func valueForICloud(_ key: String) -> Any? {
+        switch key {
+        case Keys.favoriteTeamID: return favoriteTeamID ?? ""
+        case Keys.accentMode: return accentMode.rawValue
+        case Keys.customAccentHex: return customAccentHex
+        case Keys.appearance: return appearance.rawValue
+        case Keys.selectedSeason: return selectedSeason
+        case Keys.showPregamePredictions: return showPregamePredictions
+        case Keys.hiddenCompetitionIDs: return Array(hiddenCompetitionIDs).sorted()
+        default: return nil
+        }
+    }
+
+    private func applyICloudValues(keys: Set<String>) {
+        guard let cloudStore else { return }
+        isApplyingCloudValues = true
+        defer { isApplyingCloudValues = false }
+
+        // A change the user just made here must never be overwritten by a
+        // delayed first download from another device.
+        for key in keys.subtracting(editedBeforeCloudBootstrap) {
+            guard let value = cloudStore.object(forKey: key) else { continue }
+            switch key {
+            case Keys.favoriteTeamID:
+                if let text = value as? String {
+                    favoriteTeamID = text.isEmpty ? nil : text
+                }
+            case Keys.accentMode:
+                if let text = value as? String,
+                   let mode = AppAccentMode(rawValue: text) {
+                    accentMode = mode
+                }
+            case Keys.customAccentHex:
+                if let text = value as? String,
+                   text.range(
+                    of: "^#[0-9a-fA-F]{6}$",
+                    options: .regularExpression
+                   ) != nil {
+                    customAccentHex = text
+                }
+            case Keys.appearance:
+                if let text = value as? String,
+                   let mode = AppAppearance(rawValue: text) {
+                    appearance = mode
+                }
+            case Keys.selectedSeason:
+                if let text = value as? String,
+                   Self.validSeason(text) {
+                    selectedSeason = text
+                }
+            case Keys.showPregamePredictions:
+                if let number = value as? NSNumber {
+                    showPregamePredictions = number.boolValue
+                }
+            case Keys.hiddenCompetitionIDs:
+                if let ids = value as? [String] {
+                    hiddenCompetitionIDs = Set(ids.map { $0.uppercased() })
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private static func validSeason(_ text: String) -> Bool {
+        guard let start = Int(text.prefix(4)),
+              (2019...2026).contains(start) else { return false }
+        return text == "\(start)-\(start + 1)"
+    }
+
+    deinit {
+        if let cloudObserver {
+            NotificationCenter.default.removeObserver(cloudObserver)
+        }
     }
 
     var preferredColorScheme: ColorScheme? {
@@ -285,6 +458,11 @@ final class AppSettingsStore: ObservableObject {
         static let selectedSeason = "settings.selectedSeason"
         static let showPregamePredictions = "settings.showPregamePredictions"
         static let hiddenCompetitionIDs = "settings.hiddenCompetitionIDs"
+
+        static let synced: Set<String> = [
+            favoriteTeamID, accentMode, customAccentHex, appearance,
+            selectedSeason, showPregamePredictions, hiddenCompetitionIDs
+        ]
     }
 }
 
