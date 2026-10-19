@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import Foundation
+import CryptoKit
 
 enum AppAppearance: String, CaseIterable, Identifiable {
     case dark
@@ -157,18 +158,34 @@ final class AppSettingsStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private let cloudKeyPrefix: String?
     private let cloudStore: NSUbiquitousKeyValueStore?
     private var cloudObserver: NSObjectProtocol?
     private var cloudBootstrapComplete = false
     private var isApplyingCloudValues = false
     private var editedBeforeCloudBootstrap = Set<String>()
 
-    // A custom UserDefaults store used in tests stays entirely local by
-    // default. AppSettingsStore() uses iCloud when its entitlement is active.
-    init(defaults: UserDefaults = .standard, syncWithICloud: Bool? = nil) {
-        self.defaults = defaults
-        let useICloud = syncWithICloud ?? (defaults === UserDefaults.standard)
-        self.cloudStore = useICloud ? NSUbiquitousKeyValueStore.default : nil
+    // Every authenticated Apple identity owns a separate preferences domain.
+    // No legacy global settings are read or automatically transferred.
+    init(
+        accountID: String? = nil,
+        defaults: UserDefaults? = nil,
+        syncWithICloud: Bool? = nil
+    ) {
+        let namespace = accountID.map { userID in
+            SHA256.hash(data: Data(userID.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+        }
+        let accountDomain = namespace.map {
+            "com.akappy.Iceometrics.apple-account.v1." + $0
+        }
+        self.defaults = defaults ?? accountDomain.flatMap(UserDefaults.init(suiteName:))
+            ?? UserDefaults(suiteName: "com.akappy.Iceometrics.unauthed-preview")!
+        self.cloudKeyPrefix = accountDomain.map { $0 + "." }
+        let useICloud = syncWithICloud ?? (accountID != nil && defaults == nil)
+        self.cloudStore = useICloud && accountID != nil
+            ? NSUbiquitousKeyValueStore.default : nil
         favoriteTeamID = defaults.string(forKey: Keys.favoriteTeamID)
 
         accentMode = AppAccentMode(
@@ -251,8 +268,11 @@ final class AppSettingsStore: ObservableObject {
             editedBeforeCloudBootstrap.removeAll()
         }
         let changed: Set<String>
-        if let keys {
-            changed = Set(keys)
+        if let keys, let cloudKeyPrefix {
+            changed = Set(keys.compactMap { key in
+                guard key.hasPrefix(cloudKeyPrefix) else { return nil }
+                return String(key.dropFirst(cloudKeyPrefix.count))
+            })
         } else {
             changed = Keys.synced
         }
@@ -271,7 +291,7 @@ final class AppSettingsStore: ObservableObject {
         // over untouched defaults, even when the first download is delayed.
         for key in editedBeforeCloudBootstrap {
             if let value = valueForICloud(key) {
-                cloudStore.set(value, forKey: key)
+                cloudStore.set(value, forKey: cloudKey(key))
             }
         }
         editedBeforeCloudBootstrap.removeAll()
@@ -285,9 +305,13 @@ final class AppSettingsStore: ObservableObject {
         editedBeforeCloudBootstrap.removeAll()
         for key in Keys.synced {
             if let value = valueForICloud(key) {
-                cloudStore.set(value, forKey: key)
+                cloudStore.set(value, forKey: cloudKey(key))
             }
         }
+    }
+
+    private func cloudKey(_ key: String) -> String {
+        (cloudKeyPrefix ?? "unauthenticated.") + key
     }
 
     private func publishToICloud(_ key: String) {
@@ -297,7 +321,7 @@ final class AppSettingsStore: ObservableObject {
             return
         }
         if let value = valueForICloud(key) {
-            cloudStore.set(value, forKey: key)
+            cloudStore.set(value, forKey: cloudKey(key))
         }
     }
 
@@ -322,7 +346,7 @@ final class AppSettingsStore: ObservableObject {
         // A change the user just made here must never be overwritten by a
         // delayed first download from another device.
         for key in keys.subtracting(editedBeforeCloudBootstrap) {
-            guard let value = cloudStore.object(forKey: key) else { continue }
+            guard let value = cloudStore.object(forKey: cloudKey(key)) else { continue }
             switch key {
             case Keys.favoriteTeamID:
                 if let text = value as? String {
