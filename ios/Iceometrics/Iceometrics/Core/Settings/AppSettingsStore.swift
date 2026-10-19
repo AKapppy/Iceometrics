@@ -272,6 +272,19 @@ final class AppSettingsStore: ObservableObject {
         editedBeforeCloudBootstrap.removeAll()
     }
 
+    // Explicit migration for settings saved before iCloud sync was added.
+    // Called only after the user confirms this action in Settings.
+    func uploadSettingsFromThisDevice() {
+        guard let cloudStore else { return }
+        cloudBootstrapComplete = true
+        editedBeforeCloudBootstrap.removeAll()
+        for key in Keys.synced {
+            if let value = valueForICloud(key) {
+                cloudStore.set(value, forKey: key)
+            }
+        }
+    }
+
     private func publishToICloud(_ key: String) {
         guard let cloudStore, !isApplyingCloudValues else { return }
         guard cloudBootstrapComplete else {
