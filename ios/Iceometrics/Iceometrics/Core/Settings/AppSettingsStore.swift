@@ -190,7 +190,7 @@ final class AppSettingsStore: ObservableObject {
 
         accentMode = AppAccentMode(
             rawValue: defaults.string(forKey: Keys.accentMode) ?? ""
-        ) ?? .favorite
+        ) ?? .appDefault
 
         customAccentHex = defaults.string(
             forKey: Keys.customAccentHex
@@ -198,7 +198,7 @@ final class AppSettingsStore: ObservableObject {
 
         appearance = AppAppearance(
             rawValue: defaults.string(forKey: Keys.appearance) ?? ""
-        ) ?? .dark
+        ) ?? .system
 
         // The current season remains the default even after a fresh install.
         let storedSeason = defaults.string(forKey: Keys.selectedSeason) ?? "2026-2027"
@@ -480,9 +480,9 @@ final class AppSettingsStore: ObservableObject {
 
     func reset() {
         favoriteTeamID = nil
-        accentMode = .favorite
+        accentMode = .appDefault
         customAccentHex = "#0A84FF"
-        appearance = .dark
+        appearance = .system
         selectedSeason = "2026-2027"
         showPregamePredictions = true
         hiddenCompetitionIDs = []
