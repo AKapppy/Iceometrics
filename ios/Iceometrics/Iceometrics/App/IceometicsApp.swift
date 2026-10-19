@@ -3,16 +3,43 @@ import WidgetKit
 
 @main
 struct IceometicsApp: App {
-    @StateObject private var homeViewModel = HomeViewModel(
-        repository: AppEnvironment.makeRepository()
-    )
-
-    @StateObject private var settings = AppSettingsStore()
+    @StateObject private var session = AppleAccountSession()
 
     var body: some Scene {
         WindowGroup {
+            Group {
+                if session.isChecking {
+                    ProgressView("Checking Apple sign-in…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let accountID = session.userID {
+                    IceometricsAuthenticatedView(accountID: accountID, session: session)
+                        .id(accountID)
+                } else {
+                    IceometricsLoginView(session: session)
+                }
+            }
+        }
+    }
+}
+
+// No data-loading view is constructed until Sign in with Apple succeeds.
+// Closing the authorized view destroys the account-specific settings store.
+private struct IceometricsAuthenticatedView: View {
+    @StateObject private var homeViewModel = HomeViewModel(
+        repository: AppEnvironment.makeRepository()
+    )
+    @StateObject private var settings: AppSettingsStore
+    @ObservedObject var session: AppleAccountSession
+
+    init(accountID: String, session: AppleAccountSession) {
+        _settings = StateObject(wrappedValue: AppSettingsStore(accountID: accountID))
+        self.session = session
+    }
+
+    var body: some View {
             RootView(homeViewModel: homeViewModel)
                 .environmentObject(settings)
+                .environmentObject(session)
                 .environment(
                     \.iceometricsFavoritePaletteTeamCode,
                     settings.favoritePaletteTeamCode(
@@ -68,7 +95,6 @@ struct IceometicsApp: App {
                         favoriteTeamID: favoriteTeamID
                     )
                 }
-        }
     }
 }
 
