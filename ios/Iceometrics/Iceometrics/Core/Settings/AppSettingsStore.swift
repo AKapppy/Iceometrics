@@ -180,8 +180,16 @@ final class AppSettingsStore: ObservableObject {
         let accountDomain = namespace.map {
             "com.akappy.Iceometrics.apple-account.v1." + $0
         }
-        self.defaults = defaults ?? accountDomain.flatMap(UserDefaults.init(suiteName:))
-            ?? UserDefaults(suiteName: "com.akappy.Iceometrics.unauthed-preview")!
+        if let defaults {
+            self.defaults = defaults
+        } else if let accountDomain,
+                  let domainDefaults = UserDefaults(suiteName: accountDomain) {
+            self.defaults = domainDefaults
+        } else {
+            self.defaults = UserDefaults(
+                suiteName: "com.akappy.Iceometrics.unauthed-preview"
+            ) ?? .standard
+        }
         self.cloudKeyPrefix = accountDomain.map { $0 + "." }
         let useICloud = syncWithICloud ?? (accountID != nil && defaults == nil)
         self.cloudStore = useICloud && accountID != nil
