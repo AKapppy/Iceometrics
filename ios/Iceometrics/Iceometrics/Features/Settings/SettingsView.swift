@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var customColor: Color
+    @State private var showingSyncConfirmation = false
 
     init(
         settings: AppSettingsStore,
