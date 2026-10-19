@@ -51,7 +51,32 @@ struct SettingsCloudLocalFallbackTests {
         second.reset()
         let third = AppSettingsStore(defaults: defaults, syncWithICloud: false)
         #expect(third.favoriteTeamID == nil)
-        #expect(third.appearance == .dark)
+        #expect(third.appearance == .system)
         #expect(third.isCompetitionVisible("PWHL") == true)
+    }
+}
+
+
+@MainActor
+struct AppleAccountPreferenceIsolationTests {
+    @Test("Fresh Apple accounts start without favorite or custom settings")
+    func accountsAreSeparate() {
+        let idA = "alpha-account-" + UUID().uuidString
+        let idB = "beta-account-" + UUID().uuidString
+
+        let first = AppSettingsStore(accountID: idA, syncWithICloud: false)
+        #expect(first.favoriteTeamID == nil)
+        #expect(first.appearance == .system)
+        #expect(first.accentMode == .appDefault)
+        first.favoriteTeamID = "NYR"
+        first.appearance = .light
+
+        let second = AppSettingsStore(accountID: idB, syncWithICloud: false)
+        #expect(second.favoriteTeamID == nil)
+        #expect(second.appearance == .system)
+
+        let again = AppSettingsStore(accountID: idA, syncWithICloud: false)
+        #expect(again.favoriteTeamID == "NYR")
+        #expect(again.appearance == .light)
     }
 }
