@@ -146,6 +146,17 @@ struct SettingsView: View {
                 }
             }
 
+            Section("iCloud Settings Sync") {
+                Label("Sync across Apple devices", systemImage: "icloud")
+                    .font(.subheadline.weight(.medium))
+                Text("Favorite team, appearance, accent color, season, predictions, and visible leagues sync between your Mac, iPhone, and iPad when iCloud is available and they use the same Apple Account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Settings remain saved on this device when offline. iCloud updates may take a little time.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Button("Reset Settings", role: .destructive) {
                     settings.reset()
