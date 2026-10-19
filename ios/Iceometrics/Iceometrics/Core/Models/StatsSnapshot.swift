@@ -408,11 +408,33 @@ nonisolated struct StatsSnapshot: Sendable {
                 let hasUnfinishedGame = !teamGames.isEmpty
                     && teamGames.contains { !$0.isFinal }
 
-                rows[team.code, default: []].append(
-                    hasUnfinishedGame
-                        ? nil
-                        : Double(totals[team.code, default: 0])
-                )
+                // Goal Differential is a live scoreboard, not a standings
+                // result. Overlay the *current* score margin onto the
+                // completed-game total without committing it to totals.
+                // When NHL reports FINAL the final-game loop above commits
+                // that score exactly once, so no further live adjustment runs.
+                let liveGames = teamGames.filter {
+                    $0.state.uppercased() == "LIVE"
+                        || $0.status.lowercased() == "live"
+                }
+                let liveMargins = liveGames.compactMap { game -> Int? in
+                    guard let away = game.awayScore,
+                          let home = game.homeScore else { return nil }
+                    return team.code == game.awayCode
+                        ? away - home : home - away
+                }
+                let hasLiveScore = !liveMargins.isEmpty
+                let provisional = totals[team.code, default: 0]
+                    + liveMargins.reduce(0, +)
+                let value: Double?
+                if kind == .goalDifferential && hasLiveScore {
+                    value = Double(provisional)
+                } else if hasUnfinishedGame {
+                    value = nil
+                } else {
+                    value = Double(totals[team.code, default: 0])
+                }
+                rows[team.code, default: []].append(value)
             }
         }
 

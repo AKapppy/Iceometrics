@@ -7,6 +7,8 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var customColor: Color
+    @EnvironmentObject private var accountSession: AppleAccountSession
+    @State private var showingSignOutConfirmation = false
 
     init(
         settings: AppSettingsStore,
@@ -146,6 +148,19 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Apple Account") {
+                Label("Signed in with Apple", systemImage: "person.crop.circle.badge.checkmark")
+                Text("Your favorite team and other preferences are saved separately for this Apple sign-in. When the same account is used for both Sign in with Apple and iCloud, they can sync between your devices.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Existing preferences from older Iceometrics builds are not imported automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign Out", role: .destructive) {
+                    showingSignOutConfirmation = true
+                }
+            }
+
             Section {
                 Button("Reset Settings", role: .destructive) {
                     settings.reset()
@@ -157,6 +172,19 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .confirmationDialog(
+            "Sign out of Iceometrics?",
+            isPresented: $showingSignOutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out", role: .destructive) {
+                dismiss()
+                accountSession.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Iceometrics will lock. Saved preferences for this account will remain available the next time you sign in.")
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {

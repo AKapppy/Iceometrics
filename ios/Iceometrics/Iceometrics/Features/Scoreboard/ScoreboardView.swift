@@ -91,14 +91,10 @@ struct ScoreboardView: View {
         // Only the selected day's games can affect section ordering here.
         // Avoid materializing the full-season merged game array on every
         // scoreboard body update (especially during live polling).
-        for game in gamesForSelectedDate {
-            if game.awayTeam.id == favoriteTeamID
-                || game.homeTeam.id == favoriteTeamID
-            {
-                return ScoreboardCompetitionCatalog.id(
-                    for: game
-                )
-            }
+        for game in gamesForSelectedDate where isFavoriteGame(
+            game, favoriteTeamID: favoriteTeamID
+        ) {
+            return ScoreboardCompetitionCatalog.id(for: game)
         }
 
         return nil
@@ -496,8 +492,11 @@ struct ScoreboardView: View {
         _ game: HockeyGame,
         favoriteTeamID: String
     ) -> Bool {
-        game.awayTeam.id == favoriteTeamID
+        let selected = favoriteTeamID.uppercased()
+        return game.awayTeam.id == favoriteTeamID
             || game.homeTeam.id == favoriteTeamID
+            || game.awayTeam.abbreviation.uppercased() == selected
+            || game.homeTeam.abbreviation.uppercased() == selected
     }
 
     private func displayedPrediction(
@@ -1275,13 +1274,7 @@ private struct SmartFillGameTile: View {
         case .scheduled:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            let period = game.periodType?.uppercased() ?? ""
-            let label = (period == "OT" || period == "SO")
-                ? period : "P\(game.periodNumber ?? 1)"
-            if let clock = game.timeRemaining, !clock.isEmpty {
-                return "LIVE · \(label) · \(clock)"
-            }
-            return "LIVE · \(label)"
+            return game.scoreboardLiveText
         case .final: return "FINAL"
         case .postponed: return "POSTPONED"
         case .unknown: return "STATUS PENDING"
@@ -1490,17 +1483,23 @@ private struct IceometricsDocSmartSection: View {
 
     private func isFavorite(_ game: HockeyGame) -> Bool {
         guard let favoriteTeamID else { return false }
-        return game.awayTeam.id == favoriteTeamID || game.homeTeam.id == favoriteTeamID
+        let code = favoriteCode
+        return game.awayTeam.id == favoriteTeamID
+            || game.homeTeam.id == favoriteTeamID
+            || (code != nil && (
+                game.awayTeam.abbreviation.uppercased() == code
+                || game.homeTeam.abbreviation.uppercased() == code
+            ))
     }
 
     private func lateClose(_ game: HockeyGame) -> Bool {
-        guard let away = game.awayScore, let home = game.homeScore,
-              abs(away - home) <= 1 else { return false }
-        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3)
+        guard game.status == .live, let away = game.awayScore,
+              let home = game.homeScore, abs(away - home) <= 1 else { return false }
+        return (game.periodNumber ?? 0) >= 3
     }
 
     private func overtime(_ game: HockeyGame) -> Bool {
-        guard game.status == .live || game.status == .final else { return false }
+        guard game.status == .live else { return false }
         let period = game.periodType?.uppercased() ?? ""
         return period == "OT" || period == "SO" || (game.periodNumber ?? 0) >= 4
     }
@@ -1549,22 +1548,26 @@ private struct IceometricsDocSmartSection: View {
         let headings = CGFloat(sectionGameCounts.count) * 45
         let gaps = CGFloat(max(0, totalRows - 1)) * gap
         let budget = (viewportHeight - 129 - headings - gaps) / CGFloat(totalRows)
-        // Sparse slates grow; crowded schedules scroll instead of crushing text.
-        return max(126, min(550, budget))
+        // Sparse slates use the available height instead of leaving a dead
+        // lower half on Mac/iPad. Busy slates retain compact, scrollable rows.
+        let sparse = sectionGameCounts.reduce(0, +) <= 4
+        return max(126, min(sparse ? 920 : 550, budget))
     }
 
     private func weight(_ game: HockeyGame, rivals: Set<String>) -> CGFloat {
         let numberOfGames = sectionGameCounts.reduce(0, +)
         let crowding = min(1.0, CGFloat(max(0, numberOfGames - 2)) / 12.0)
         var value: CGFloat = 1
-        if isFavorite(game) { value += 0.42 * (1 - crowding * 0.60) }
+        // Favorite is visibly larger on a busy slate (not a full-width row).
+        // Weight tapers moderately with crowding but never disappears.
+        if isFavorite(game) { value += 1.08 * (1 - crowding * 0.23) }
         if !isFavorite(game)
             && (rivals.contains(game.awayTeam.abbreviation.uppercased())
                 || rivals.contains(game.homeTeam.abbreviation.uppercased())) {
-            value += 0.18 * (1 - crowding * 0.55)
+            value += 0.27 * (1 - crowding * 0.45)
         }
-        if overtime(game) || lateClose(game) { value += 0.22 * (1 - crowding * 0.45) }
-        return min(1.75, value)
+        if overtime(game) || lateClose(game) { value += 0.45 * (1 - crowding * 0.30) }
+        return min(2.30, value)
     }
 
     // Only facts available in the loaded schedule are shown. Missing prior games
@@ -1622,7 +1625,12 @@ private struct IceometricsDocSmartSection: View {
                                             (rivals.contains(game.awayTeam.abbreviation.uppercased())
                                              || rivals.contains(game.homeTeam.abbreviation.uppercased())
                                              ? .rival : .normal)),
+                                    // Limit network requests during large slates:
+                                    // only unusually important roomy cards load rich detail.
                                     loadRichDetail: sectionGameCounts.reduce(0, +) <= 4
+                                        || (cardHeight >= 270 && (
+                                            isFavorite(game) || overtime(game) || lateClose(game)
+                                        ))
                                 )
                             }
                             .buttonStyle(.plain)
@@ -1656,6 +1664,7 @@ private struct IceometricsDocSmartCard: View {
     let loadRichDetail: Bool
 
     @State private var expandedDetail: NHLGameDetail?
+    @State private var onIceStrength: NHLOnIceStrength?
 
     private var showPrediction: Bool {
         game.status == .scheduled || game.status == .live
@@ -1663,22 +1672,14 @@ private struct IceometricsDocSmartCard: View {
 
     private var isOvertime: Bool {
         let type = game.periodType?.uppercased() ?? ""
-        return (game.status == .live || game.status == .final)
+        return game.status == .live
             && (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
     }
 
     private var isClose: Bool {
-        guard let a = game.awayScore, let h = game.homeScore else { return false }
-        return game.status == .final || (game.status == .live && (game.periodNumber ?? 0) >= 3) && abs(a - h) <= 1
-    }
-
-    private var accent: Color {
-        switch emphasis {
-        case .favorite: .accentColor
-        case .rival: .blue
-        case .close: .orange
-        case .normal: .clear
-        }
+        guard game.status == .live, let a = game.awayScore,
+              let h = game.homeScore else { return false }
+        return (game.periodNumber ?? 0) >= 3 && abs(a - h) <= 1
     }
 
     var body: some View {
@@ -1688,6 +1689,7 @@ private struct IceometricsDocSmartCard: View {
             let logoSize = min(176, max(30, min(width * 0.28, cardHeight * 0.32)))
             let scoreSize = min(82, max(18, min(width * 0.15, cardHeight * 0.23)))
             let supportingSize = min(21, max(10, min(width * 0.051, cardHeight * 0.055)))
+            let detailFontSize = min(19, max(12, min(width * 0.028, cardHeight * 0.035)))
             let expanded = cardHeight >= 295 && width >= 265
 
             VStack(spacing: compact ? 4 : 11) {
@@ -1698,16 +1700,6 @@ private struct IceometricsDocSmartCard: View {
                             .monospacedDigit()
                     }
                     Spacer(minLength: 0)
-                    if emphasis == .favorite && width >= 210 {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.tint)
-                            .font(.system(size: supportingSize * 0.85))
-                            .accessibilityLabel("Favorite team")
-                    } else if (isOvertime || isClose) && width >= 210 {
-                        Text(isOvertime ? "OT / SO" : "CLOSE GAME")
-                            .font(.system(size: max(10, supportingSize * 0.75), weight: .bold))
-                            .foregroundStyle(.orange)
-                    }
                     Spacer(minLength: 0)
                     if showPrediction, let probability = prediction?.homeWinProbability {
                         Text(probability, format: .percent.precision(.fractionLength(1)))
@@ -1719,10 +1711,15 @@ private struct IceometricsDocSmartCard: View {
 
                 Spacer(minLength: 0)
                 HStack(spacing: 5) {
-                    teamColumn(game.awayTeam, shots: game.awayShots, logoSize: logoSize,
+                    teamColumn(game.awayTeam, logoSize: logoSize,
                                supportingSize: supportingSize)
                     Spacer(minLength: 0)
                     VStack(spacing: 3) {
+                        if let fourOnFour = onIceStrength?.centerBadge {
+                            Text(fourOnFour)
+                                .font(.system(size: max(10, supportingSize * 0.85), weight: .bold))
+                                .foregroundStyle(.yellow)
+                        }
                         Text(scoreText)
                             .font(.system(size: scoreSize, weight: .heavy, design: .rounded))
                             .monospacedDigit().lineLimit(1).minimumScaleFactor(0.55)
@@ -1730,13 +1727,21 @@ private struct IceometricsDocSmartCard: View {
                             .font(.system(size: supportingSize, weight: .bold))
                             .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                             .minimumScaleFactor(0.7)
+                        if game.status == .live || game.status == .final {
+                            Text("SOG \(game.awayShots.map(String.init) ?? "–")  –  \(game.homeShots.map(String.init) ?? "–")")
+                                .font(.system(size: supportingSize * 0.85, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
                     }
                     Spacer(minLength: 0)
-                    teamColumn(game.homeTeam, shots: game.homeShots, logoSize: logoSize,
+                    teamColumn(game.homeTeam, logoSize: logoSize,
                                supportingSize: supportingSize)
                 }
-                Spacer(minLength: 0)
-
+                // Keep verified context directly beneath the matchup instead of
+                // pinning microscopic player names to the card's bottom edge.
                 if game.status == .live, game.isIntermission != true,
                    let situation = expandedDetail?.specialTeams.state,
                    situation.contains("Power Play") {
@@ -1746,29 +1751,87 @@ private struct IceometricsDocSmartCard: View {
                 }
 
                 if expanded {
-                    if game.status == .scheduled, let detail = expandedDetail {
-                        let awayLeader = detail.awayLeaders.points ?? detail.awayLeaders.goals
-                        let homeLeader = detail.homeLeaders.points ?? detail.homeLeaders.goals
-                        if let awayLeader, let homeLeader {
-                            Text("NHL leaders · \(game.awayTeam.abbreviation): \(awayLeader)  ·  \(game.homeTeam.abbreviation): \(homeLeader)")
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .lineLimit(1).minimumScaleFactor(0.65)
+                    VStack(spacing: min(18, max(8, cardHeight * 0.022))) {
+                        // Reuse the already-loaded NHL gamecenter boxscore.
+                        // Show no predicted names or synthetic starter labels.
+                        if let detail = expandedDetail,
+                           detail.awayGoalie != nil || detail.homeGoalie != nil {
+                            comparisonDetail(
+                                title: "NHL STARTERS",
+                                away: detail.awayGoalie?.name ?? "—",
+                                home: detail.homeGoalie?.name ?? "—",
+                                fontSize: detailFontSize * 0.84
+                            )
+                        }
+                        if game.status == .scheduled,
+                           let detail = expandedDetail {
+                            if detail.awayLeaders.goals != nil || detail.homeLeaders.goals != nil {
+                                comparisonDetail(
+                                    title: "GOALS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.goals ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.goals ?? "—", isAway: false),
+                                    fontSize: detailFontSize
+                                )
+                            }
+                            if detail.awayLeaders.assists != nil || detail.homeLeaders.assists != nil {
+                                comparisonDetail(
+                                    title: "ASSISTS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.assists ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.assists ?? "—", isAway: false),
+                                    fontSize: detailFontSize
+                                )
+                            }
+                            if detail.awayLeaders.points != nil || detail.homeLeaders.points != nil {
+                                comparisonDetail(
+                                    title: "POINTS LEADERS",
+                                    away: leaderDisplay(detail.awayLeaders.points ?? "—", isAway: true),
+                                    home: leaderDisplay(detail.homeLeaders.points ?? "—", isAway: false),
+                                    fontSize: detailFontSize
+                                )
+                            }
+                        }
+                        if (game.status == .live || game.status == .final),
+                           let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
+                            let away = scorers.filter {
+                                $0.team.uppercased() == game.awayTeam.abbreviation.uppercased()
+                            }.suffix(3)
+                            let home = scorers.filter {
+                                $0.team.uppercased() == game.homeTeam.abbreviation.uppercased()
+                            }.suffix(3)
+                            comparisonDetail(
+                                title: "GOAL SCORERS",
+                                away: away.isEmpty ? "—" : away.map { $0.player }.joined(separator: " · "),
+                                home: home.isEmpty ? "—" : home.map { $0.player }.joined(separator: " · "),
+                                fontSize: detailFontSize
+                            )
+                        }
+                        if (game.status == .live || game.status == .final),
+                           cardHeight >= 405, width >= 350,
+                           let lines = expandedDetail?.stats {
+                            ForEach(lines.filter { stat in
+                                ["Face-off %", "Power Play"].contains(stat.label)
+                                    && stat.awayValue != NHLGameDetailService.missingText
+                                    && stat.homeValue != NHLGameDetailService.missingText
+                            }) { stat in
+                                comparisonDetail(
+                                    title: stat.label.uppercased(),
+                                    away: stat.awayValue,
+                                    home: stat.homeValue,
+                                    fontSize: detailFontSize * 0.85
+                                )
+                            }
+                        }
+                        if let seasonSeriesText {
+                            Text(seasonSeriesText)
+                                .font(.system(size: detailFontSize * 0.80, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2).minimumScaleFactor(0.75)
                         }
                     }
-                    if game.status == .live || game.status == .final {
-                        if let scorers = expandedDetail?.goalScorers, !scorers.isEmpty {
-                            let latest = scorers.suffix(2)
-                            Text("Goals · " + latest.map { "\($0.team) \($0.player)" }.joined(separator: " · "))
-                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .lineLimit(2).minimumScaleFactor(0.7)
-                        }
-                    }
-                    if let seasonSeriesText {
-                        Text(seasonSeriesText)
-                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
-                    }
+                    .frame(maxWidth: .infinity)
                 }
+
+                Spacer(minLength: 0)
 
                 Label(
                     game.venue?.isEmpty == false ? (game.venue ?? "") : "Venue TBD",
@@ -1781,15 +1844,38 @@ private struct IceometricsDocSmartCard: View {
             .padding(.horizontal, compact ? 9 : 16)
             .padding(.vertical, compact ? 8 : 13)
             .frame(width: width, height: geometry.size.height)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
-            .overlay {
+            .background {
                 RoundedRectangle(cornerRadius: 18)
-                    .stroke(accent.opacity(emphasis == .normal ? 0 : 0.80),
-                            lineWidth: emphasis == .normal ? 0 : 2)
+                    .fill(.thinMaterial)
+                    .overlay {
+                        if showPrediction, let prediction {
+                            GeometryReader { proxy in
+                                let share = min(0.88, max(0.12,
+                                    CGFloat(prediction.awayWinProbability)))
+                                HStack(spacing: 0) {
+                                    Color(hex: TeamAccentPalette.primaryHex(for: game.awayTeam)
+                                        ?? "", fallback: .clear)
+                                        .opacity(0.15)
+                                        .frame(width: proxy.size.width * share)
+                                    Color(hex: TeamAccentPalette.primaryHex(for: game.homeTeam)
+                                        ?? "", fallback: .clear)
+                                        .opacity(0.15)
+                                }
+                            }
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(.quaternary, lineWidth: 1)
+            }
+            .task(id: "\(game.id)-\(game.status)-\(game.periodNumber ?? 0)-\(game.timeRemaining ?? "")-\(game.isIntermission == true)") {
+                guard game.status == .live, game.isIntermission != true else {
+                    onIceStrength = nil
+                    return
+                }
+                onIceStrength = await NHLGameDetailService().fetchOnIceStrength(for: game)
             }
             .task(id: "\(game.id)-\(game.status)-\(expanded)-\(loadRichDetail)") {
                 guard expanded, loadRichDetail, game.leagueCode == "NHL" else {
@@ -1805,15 +1891,55 @@ private struct IceometricsDocSmartCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func teamColumn(_ team: Team, shots: Int?, logoSize: CGFloat,
+    // All metric titles and two team values share one baseline.
+    private func comparisonDetail(
+        title: String,
+        away: String,
+        home: String,
+        fontSize: CGFloat
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(away)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(title)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+            Text(home)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .font(.system(size: fontSize, weight: .medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.55)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func leaderDisplay(_ value: String, isAway: Bool) -> String {
+        // NHL team leaders are formatted "Firstname Lastname (11)".
+        guard let open = value.range(of: " (", options: .backwards),
+              value.hasSuffix(")") else { return value }
+        let name = String(value[..<open.lowerBound])
+        let count = String(value[open.upperBound..<value.index(before: value.endIndex)])
+        return isAway ? "\(count) \(name)" : "\(name) \(count)"
+    }
+
+    private func teamColumn(_ team: Team, logoSize: CGFloat,
                             supportingSize: CGFloat) -> some View {
         VStack(spacing: 3) {
             TeamLogoView(team: team, size: logoSize)
-            if game.status == .live || game.status == .final {
-                Text("SOG \(shots.map(String.init) ?? "–")")
-                    .font(.system(size: supportingSize, weight: .medium))
-                    .monospacedDigit().foregroundStyle(.secondary)
-            }
+                .overlay(alignment: .top) {
+                    let badge = team.id == game.awayTeam.id
+                        ? onIceStrength?.awayBadge : onIceStrength?.homeBadge
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: max(10, supportingSize * 0.80), weight: .heavy))
+                            .foregroundStyle(.primary)
+                            .offset(y: -8)
+                    }
+                }
+
         }
         .frame(maxWidth: .infinity)
     }
@@ -1831,9 +1957,11 @@ private struct IceometricsDocSmartCard: View {
         case .scheduled, .unknown:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            return game.timeRemaining.map { "LIVE · " + $0 } ?? "LIVE"
+            return game.scoreboardLiveText
         case .final:
-            return isOvertime ? "FINAL · OT/SO" : "FINAL"
+            let type = game.periodType?.uppercased() ?? ""
+            return (type == "OT" || type == "SO" || (game.periodNumber ?? 0) >= 4)
+                ? "FINAL · OT/SO" : "FINAL"
         case .postponed: return "PPD"
         }
     }

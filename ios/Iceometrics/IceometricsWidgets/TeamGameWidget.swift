@@ -35,7 +35,21 @@ struct TeamGameProvider: AppIntentTimelineProvider {
         for configuration: TeamGameIntent,
         in context: Context
     ) async -> Timeline<TeamGameEntry> {
-        let entry = makeEntry(for: configuration)
+        // A widget timeline can refresh without the host app being open.
+        // Use the saved values immediately; replace them only with a
+        // validated MoneyPuck forecast for this exact NHL matchup.
+        var entry = makeEntry(for: configuration)
+        if let game = entry.game,
+           let odds = await WidgetMoneyPuckForecast.fetch(for: game) {
+            entry = TeamGameEntry(
+                date: Date(),
+                game: game.withForecast(
+                    away: odds.away, home: odds.home
+                ),
+                hasSnapshot: entry.hasSnapshot,
+                selectedTeam: entry.selectedTeam
+            )
+        }
 
         let seconds: TimeInterval
         if let game = entry.game {
@@ -112,6 +126,126 @@ struct TeamGameProvider: AppIntentTimelineProvider {
         case .scheduled: return 1
         case .postponed, .unknown: return 0
         }
+    }
+}
+
+// Self-contained because the widget extension runs even when Iceometrics
+// is closed. Do not show invented 50/50 chances if MoneyPuck is unavailable.
+private extension WidgetGame {
+    func withForecast(away: Double, home: Double) -> WidgetGame {
+        WidgetGame(
+            id: id, startTime: startTime, isToday: isToday,
+            awayTeam: awayTeam, homeTeam: homeTeam,
+            awayScore: awayScore, homeScore: homeScore,
+            awayProbability: away, homeProbability: home,
+            phase: phase, detail: detail,
+            isFavoriteTeamGame: isFavoriteTeamGame
+        )
+    }
+}
+
+private enum WidgetMoneyPuckForecast {
+    static func fetch(for game: WidgetGame) async -> (away: Double, home: Double)? {
+        guard Int(game.id) != nil else { return nil }
+        let url: URL?
+        switch game.phase {
+        case .scheduled, .starting:
+            url = URL(string:
+                "https://moneypuck.com/moneypuck/predictions/\(game.id).csv")
+        case .live, .intermission:
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = TimeZone(secondsFromGMT: 0)!
+            let components = cal.dateComponents([.year, .month], from: game.startTime)
+            guard let year = components.year, let month = components.month else {
+                return nil
+            }
+            let start = month >= 7 ? year : year - 1
+            url = URL(string:
+                "https://moneypuck.com/moneypuck/gameData/\(start)\(start + 1)/\(game.id).csv")
+        case .final, .postponed, .unknown:
+            return nil
+        }
+        guard let url else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 7
+        request.setValue("text/csv,*/*", forHTTPHeaderField: "Accept")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              200..<300 ~= http.statusCode,
+              let csv = String(data: data, encoding: .utf8),
+              let firstLine = csv.split(whereSeparator: \.isNewline).first else {
+            return nil
+        }
+        let rows = csv.split(whereSeparator: \.isNewline)
+        let headers = csvLine(String(firstLine))
+        let target = game.phase == .live || game.phase == .intermission
+            ? rows.last : rows.dropFirst().first
+        guard let target else { return nil }
+        let dataCells = csvLine(String(target))
+        var record: [String: String] = [:]
+        for (index, header) in headers.enumerated()
+            where dataCells.indices.contains(index) {
+            record[header] = dataCells[index]
+        }
+        if game.phase == .scheduled || game.phase == .starting {
+            if let id = record["gameID"], id != game.id { return nil }
+            if let home = record["homeTeamCode"],
+               home.uppercased() != game.homeTeam.abbreviation.uppercased() {
+                return nil
+            }
+            if let away = record["roadTeamCode"],
+               away.uppercased() != game.awayTeam.abbreviation.uppercased() {
+                return nil
+            }
+        }
+        let away: Double?
+        let home: Double?
+        if game.phase == .scheduled || game.phase == .starting {
+            away = probability(record["preGameAwayTeamWinOverallScore"])
+            home = probability(record["preGameHomeTeamWinOverallScore"])
+        } else {
+            away = probability(record["liveAwayTeamWinOverallScore"])
+                ?? probability(record["awayWinProbability"])
+            home = probability(record["liveHomeTeamWinOverallScore"])
+                ?? probability(record["homeWinProbability"])
+        }
+        guard let away, let home, away + home > 0 else { return nil }
+        return (away / (away + home), home / (away + home))
+    }
+
+    private static func probability(_ raw: String?) -> Double? {
+        guard let raw,
+              let n = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              n.isFinite, n >= 0, n <= 100 else { return nil }
+        return n <= 1 ? n : n / 100
+    }
+
+    private static func csvLine(_ line: String) -> [String] {
+        var values: [String] = []
+        var value = ""
+        var quoted = false
+        var cursor = line.startIndex
+        while cursor < line.endIndex {
+            let char = line[cursor]
+            if char == "\"" {
+                let next = line.index(after: cursor)
+                if quoted, next < line.endIndex, line[next] == "\"" {
+                    value.append("\"")
+                    cursor = line.index(after: next)
+                    continue
+                }
+                quoted.toggle()
+            } else if char == "," && !quoted {
+                values.append(value)
+                value = ""
+            } else {
+                value.append(char)
+            }
+            cursor = line.index(after: cursor)
+        }
+        values.append(value)
+        return values
     }
 }
 

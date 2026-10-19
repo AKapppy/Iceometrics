@@ -3,6 +3,7 @@ import SwiftUI
 struct ScoreboardCardView: View {
     let game: HockeyGame
     let prediction: MoneyPuckGamePrediction?
+    @State private var onIceStrength: NHLOnIceStrength?
 
     init(
         game: HockeyGame,
@@ -21,7 +22,8 @@ struct ScoreboardCardView: View {
                 gameStatus: game.status,
                 winProbability: displayedProbability(
                     prediction?.awayWinProbability
-                )
+                ),
+                strengthBadge: onIceStrength?.awayBadge
             )
 
             HStack(spacing: 10) {
@@ -29,7 +31,7 @@ struct ScoreboardCardView: View {
                     .fill(.quaternary)
                     .frame(height: 1)
 
-                Text("@")
+                Text(onIceStrength?.centerBadge ?? "@")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
 
@@ -45,7 +47,8 @@ struct ScoreboardCardView: View {
                 gameStatus: game.status,
                 winProbability: displayedProbability(
                     prediction?.homeWinProbability
-                )
+                ),
+                strengthBadge: onIceStrength?.homeBadge
             )
 
             HStack(alignment: .center, spacing: 12) {
@@ -95,6 +98,13 @@ struct ScoreboardCardView: View {
             .stroke(.quaternary, lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
+        .task(id: "\(game.id)-\(game.status)-\(game.periodNumber ?? 0)-\(game.timeRemaining ?? "")-\(game.isIntermission == true)") {
+            guard game.status == .live, game.isIntermission != true else {
+                onIceStrength = nil
+                return
+            }
+            onIceStrength = await NHLGameDetailService().fetchOnIceStrength(for: game)
+        }
     }
 
     private var statusBadgeText: String {
@@ -113,59 +123,7 @@ struct ScoreboardCardView: View {
     }
 
     private var liveBadgeText: String {
-        if game.isIntermission == true {
-            if let periodLabel {
-                return "\(periodLabel) Int"
-            }
-            return "Int"
-        }
-
-        let clock = game.timeRemaining?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let periodLabel,
-           let clock,
-           !clock.isEmpty {
-            return "\(periodLabel) · \(clock)"
-        }
-
-        if let periodLabel {
-            return periodLabel
-        }
-
-        if let clock, !clock.isEmpty {
-            return clock
-        }
-
-        return "LIVE"
-    }
-
-    private var periodLabel: String? {
-        let type = game.periodType?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .uppercased()
-
-        if type == "OT" {
-            return "OT"
-        }
-        if type == "SO" {
-            return "SO"
-        }
-
-        guard let period = game.periodNumber, period > 0 else {
-            return nil
-        }
-
-        switch period {
-        case 1:
-            return "1st"
-        case 2:
-            return "2nd"
-        case 3:
-            return "3rd"
-        default:
-            return "\(period)th"
-        }
+        game.scoreboardLiveText
     }
 
     private func displayedProbability(_ value: Double?) -> Double? {
@@ -184,10 +142,19 @@ private struct TeamScoreRow: View {
     let shots: Int?
     let gameStatus: GameStatus
     let winProbability: Double?
+    let strengthBadge: String?
 
     var body: some View {
         HStack(spacing: 13) {
             TeamLogoView(team: team)
+                .overlay(alignment: .top) {
+                    if let strengthBadge {
+                        Text(strengthBadge)
+                            .font(.caption2.weight(.heavy))
+                            .foregroundStyle(.primary)
+                            .offset(y: -8)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.name)

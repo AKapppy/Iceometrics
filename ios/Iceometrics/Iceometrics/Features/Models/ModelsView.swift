@@ -111,6 +111,12 @@ struct ModelsView: View {
                         PlayoffPicturePanel(
                             picture: picture,
                             teams: snapshot.teams,
+                            projectedPoints: (snapshot.pointProbabilities?.rows ?? [])
+                                .reduce(into: [String: Int]()) { values, row in
+                                    if row.prediction > 0 {
+                                        values[row.team.uppercased()] = row.prediction
+                                    }
+                                },
                             actualStandings: nhlStandings,
                             standingsLoading: nhlStandingsLoading,
                             standingsError: nhlStandingsError
@@ -123,7 +129,7 @@ struct ModelsView: View {
 
                 case .standings:
                     if let nhlStandings {
-                        IceometricsActualStandingsPanel(snapshot: nhlStandings)
+                        IceometricsActualStandingsPanel(snapshot: nhlStandings, teams: snapshot.teams)
                     } else if nhlStandingsLoading {
                         ProgressView("Loading NHL standings…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -233,8 +239,8 @@ struct ModelsView: View {
 }
 
 private enum ModelsSection: String, CaseIterable, Identifiable {
-    case playoffPicture
     case standings
+    case playoffPicture
     case magicTragic
     case pointProbabilities
     case playoffWinProbabilities
@@ -244,7 +250,7 @@ private enum ModelsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .playoffPicture:
-            "Playoff Picture"
+            "Bracket"
         case .standings:
             "Standings"
         case .magicTragic:
@@ -258,7 +264,7 @@ private enum ModelsSection: String, CaseIterable, Identifiable {
 
     var compactTitle: String {
         switch self {
-        case .playoffPicture: "Playoffs"
+        case .playoffPicture: "Bracket"
         case .standings: "Standings"
         case .magicTragic: "Magic"
         case .pointProbabilities: "Points"
@@ -321,10 +327,8 @@ private struct ModelPanelHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.title2.bold())
-
-            Spacer()
+            // The Models tab already names the content; keep only context.
+            Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(displayModelDay(day))
@@ -346,40 +350,57 @@ private struct ModelPanelHeader: View {
 private struct PlayoffPicturePanel: View {
     let picture: ModelPlayoffPicture
     let teams: [ModelTeam]
+    let projectedPoints: [String: Int]
     let actualStandings: IceometricsNHLStandings?
     let standingsLoading: Bool
     let standingsError: String?
     @State private var bracketMode: IceometricsBracketMode = .nhl
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 10) {
-                ModelPanelHeader(
-                    title: "Playoff Picture",
-                    day: picture.day,
-                    subtitle: picture.mode
-                )
-
-                Picker("Bracket format", selection: $bracketMode) {
-                    ForEach(IceometricsBracketMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+        GeometryReader { viewport in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Picker("Bracket format", selection: $bracketMode) {
+                        ForEach(IceometricsBracketMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-
-                if bracketMode == .nhl {
-                    FullPlayoffBracketGraphic(picture: picture, teams: teams)
-                } else if let actualStandings {
-                    IceometricsSeededBracket(snapshot: actualStandings, mode: bracketMode)
-                } else if standingsLoading {
-                    ProgressView("Loading NHL seedings…")
-                } else {
-                    Text(standingsError ?? "NHL seedings unavailable")
-                        .font(.caption)
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 560)
+                    Spacer(minLength: 0)
+                    Text(displayModelDay(picture.day))
+                        .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+
+                    if bracketMode == .nhl {
+                        FullPlayoffBracketGraphic(
+                            picture: picture, teams: teams,
+                            availableHeight: max(620, viewport.size.height - 65)
+                        )
+                    } else if let actualStandings {
+                        IceometricsSeededBracket(
+                            picture: picture,
+                            snapshot: actualStandings,
+                            mode: bracketMode,
+                            teams: teams,
+                            projectedPoints: projectedPoints,
+                            availableHeight: max(620, viewport.size.height - 65)
+                        )
+                    } else if standingsLoading {
+                    ProgressView("Loading NHL seedings…")
+                } else {
+                        Text(standingsError ?? "NHL seedings unavailable")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: viewport.size.height,
+                       alignment: .topLeading)
+                .padding(.bottom, 8)
             }
-            .padding(.bottom, 8)
         }
     }
 }
@@ -464,115 +485,351 @@ private enum IceometricsBracketMode: String, CaseIterable, Identifiable {
     }
 }
 
+// ICEOMETRICS_DEMO_REUSE_ORIGINAL_BRACKET_20261018
+// All alternate formats use the original NHL bracket graphic. Only seeding,
+// optional round-of-32, and advancement change. No independent renderer.
 private struct IceometricsSeededBracket: View {
+    let picture: ModelPlayoffPicture
     let snapshot: IceometricsNHLStandings
     let mode: IceometricsBracketMode
+    let teams: [ModelTeam]
+    let projectedPoints: [String: Int]
+    let availableHeight: CGFloat
 
-    private var pools: [(String, [IceometricsNHLStanding])] {
+    private var byCode: [String: IceometricsNHLStanding] {
+        Dictionary(uniqueKeysWithValues: snapshot.rows.map {
+            ($0.code.uppercased(), $0)
+        })
+    }
+    private var seeded: [IceometricsNHLStanding] {
+        snapshot.rows.sorted { $0.leagueRank < $1.leagueRank }
+    }
+    private func conference(_ name: String) -> [IceometricsNHLStanding] {
+        Array(snapshot.rows.filter { $0.conference == name }
+            .sorted { $0.conferenceRank < $1.conferenceRank }.prefix(8))
+    }
+    private func codes(
+        _ all: [IceometricsNHLStanding], positions: [Int]
+    ) -> [String] {
+        positions.compactMap { rank in
+            let index = rank - 1
+            return all.indices.contains(index) ? all[index].code : nil
+        }
+    }
+    private func winner(_ a: String, _ b: String) -> String {
+        guard !a.isEmpty else { return b }
+        guard !b.isEmpty else { return a }
+        let pa = projectedPoints[a.uppercased()] ?? 0
+        let pb = projectedPoints[b.uppercased()] ?? 0
+        if pa != pb { return pa > pb ? a : b }
+        let sa = byCode[a.uppercased()]
+        let sb = byCode[b.uppercased()]
+        let actualA = sa?.points ?? 0
+        let actualB = sb?.points ?? 0
+        if actualA != actualB { return actualA > actualB ? a : b }
+        let ra = sa?.leagueRank ?? Int.max
+        let rb = sb?.leagueRank ?? Int.max
+        if ra != rb { return ra < rb ? a : b }
+        // Stable final tiebreaker: whichever has the better original seed,
+        // then team code if the feed omitted both ranks.
+        let ia = seeded.firstIndex { $0.code == a } ?? Int.max
+        let ib = seeded.firstIndex { $0.code == b } ?? Int.max
+        if ia != ib { return ia < ib ? a : b }
+        return a < b ? a : b
+    }
+    private func pairs(_ teams: [String]) -> [[String]] {
+        stride(from: 0, to: teams.count - 1, by: 2).map {
+            [teams[$0], teams[$0 + 1]]
+        }
+    }
+    private func bracket(_ firstEight: [String], eastern: Bool) -> ModelBracket {
+        let visualR1 = pairs(firstEight)
+        let winners1 = visualR1.map { winner($0[0], $0[1]) }
+        let visualR2 = pairs(winners1)
+        let winners2 = visualR2.map { winner($0[0], $0[1]) }
+        let champion = winner(winners2[0], winners2[1])
+        // The original NHL graphic rotates the Eastern side to match
+        // the upper/lower division columns. Store the inverse order.
+        let modelR1 = eastern
+            ? Array(visualR1.suffix(2)) + Array(visualR1.prefix(2))
+            : visualR1
+        let modelR2 = eastern ? Array(visualR2.reversed()) : visualR2
+        let modelFinal = eastern ? Array(winners2.reversed()) : winners2
+        return ModelBracket(
+            round1: modelR1,
+            round2: modelR2,
+            finalMatchup: modelFinal,
+            champion: champion
+        )
+    }
+
+    // Conference mode uses independent conference seeds. League modes split
+    // ranks between opposite halves of the original bracket structure.
+    private var seedGroups: (left: [String], right: [String])? {
         switch mode {
-        case .nhl: return []
+        case .nhl:
+            return nil
         case .conference:
-            return ["Eastern", "Western"].map { name in
-                (name, Array(snapshot.rows
-                    .filter { $0.conference == name }
-                    .sorted { $0.conferenceRank < $1.conferenceRank }
-                    .prefix(8)))
+            let west = conference("Western")
+            let east = conference("Eastern")
+            guard west.count == 8, east.count == 8 else { return nil }
+            let slots = [1, 8, 4, 5, 2, 7, 3, 6]
+            return (codes(west, positions: slots), codes(east, positions: slots))
+        case .league16, .full32:
+            guard seeded.count >= (mode == .full32 ? 32 : 16) else { return nil }
+            let leftSlots = [1, 16, 8, 9, 4, 13, 5, 12]
+            let rightSlots = [2, 15, 7, 10, 3, 14, 6, 11]
+            return (codes(seeded, positions: leftSlots),
+                    codes(seeded, positions: rightSlots))
+        }
+    }
+    private var preliminary: (left: [[String]], right: [[String]])? {
+        guard mode == .full32, seeded.count >= 32,
+              let groups = seedGroups else { return nil }
+        func matches(_ selected: [String]) -> [[String]] {
+            selected.map { code in
+                guard let seed = seeded.firstIndex(where: { $0.code == code }) else {
+                    return [code, ""]
+                }
+                return [code, seeded[31 - seed].code]
             }
-        case .league16: return [("League 1–16", Array(snapshot.rows.prefix(16)))]
-        case .full32: return [("Full 32-team bracket", snapshot.rows)]
+        }
+        return (matches(groups.left), matches(groups.right))
+    }
+    private var bracketData: (
+        picture: ModelPlayoffPicture, leftOpening: [String], rightOpening: [String]
+    )? {
+        guard let groups = seedGroups,
+              groups.left.count == 8, groups.right.count == 8 else { return nil }
+        let opening = preliminary
+        let westCodes = opening?.left.map { winner($0[0], $0[1]) }
+            ?? groups.left
+        let eastCodes = opening?.right.map { winner($0[0], $0[1]) }
+            ?? groups.right
+        let west = bracket(westCodes, eastern: false)
+        let east = bracket(eastCodes, eastern: true)
+        let cup = winner(west.champion, east.champion)
+        let simulated = ModelPlayoffPicture(
+            day: picture.day,
+            seedDay: picture.seedDay,
+            mode: "Projected from MoneyPuck points; standings tiebreakers",
+            west: west,
+            east: east,
+            cupFinal: [west.champion, east.champion],
+            champion: cup
+        )
+        // Bracket() already reverses the original NHL East-side data
+        // rotation. Opening nodes must remain in visible R1 order.
+        return (simulated,
+                opening?.left.flatMap { $0 } ?? [],
+                opening?.right.flatMap { $0 } ?? [])
+    }
+
+    var body: some View {
+        Group {
+            if let data = bracketData {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Projected winners: MoneyPuck season points → actual standings → seed tiebreaks")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    FullPlayoffBracketGraphic(
+                        picture: data.picture,
+                        teams: teams,
+                        availableHeight: availableHeight,
+                        openingWest: data.leftOpening,
+                        openingEast: data.rightOpening,
+                        leftTitle: mode == .conference
+                            ? "Western Conference" : "Seed Group A",
+                        rightTitle: mode == .conference
+                            ? "Eastern Conference" : "Seed Group B",
+                        showDivisionLabels: false
+                    )
+                }
+            } else {
+                ContentUnavailableView(
+                    "Not enough NHL teams",
+                    systemImage: "trophy",
+                    description: Text("Complete standings are needed to seed this bracket.")
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+// ICEOMETRICS_BLUE_MODELS_WILDCARD_20261018
+// The first three clubs in each division qualify in their division column.
+// The remaining ten clubs form a *continuous* Wild Card ranking from 1–10.
+// Rank uses the NHL's published conference and wildcard sequences, not
+// fabricated playoff placements.
+// ICEOMETRICS_STANDINGS_FOUR_DIVISIONS_20261018
+// Match the NOTES table: Pacific | Central | Atlantic | Metro,
+// with each conference's complete wildcard below, divisional tables
+// underneath, and league-wide standings on the right.
+private struct IceometricsActualStandingsPanel: View {
+    let snapshot: IceometricsNHLStandings
+    let teams: [ModelTeam]
+
+    private let divisionOrder = [
+        "Pacific", "Central", "Atlantic", "Metropolitan"
+    ]
+
+    private func divisionRows(_ division: String) -> [IceometricsNHLStanding] {
+        snapshot.rows.filter { $0.division == division }
+            .sorted { $0.divisionRank < $1.divisionRank }
+    }
+
+    private func remainingRows(_ conference: String) -> [IceometricsNHLStanding] {
+        snapshot.rows.filter {
+            $0.conference == conference && $0.divisionRank > 3
+        }.sorted { a, b in
+            if a.wildcardRank > 0 && b.wildcardRank > 0 &&
+                a.wildcardRank != b.wildcardRank {
+                return a.wildcardRank < b.wildcardRank
+            }
+            if a.points != b.points { return a.points > b.points }
+            return a.conferenceRank < b.conferenceRank
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("ACTUAL NHL standings seeding • Not Iceometrics projected winners")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(pools.indices, id: \.self) { index in
-                let pool = pools[index]
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(pool.0).font(.headline)
-                    let seeds = pool.1
-                    ForEach(0..<(seeds.count / 2), id: \.self) { i in
-                        let home = seeds[i]
-                        let away = seeds[seeds.count - 1 - i]
-                        HStack {
-                            Text("#\(i + 1) \(home.code)")
-                            Spacer(minLength: 8)
-                            Text("vs").foregroundStyle(.tertiary)
-                            Spacer(minLength: 8)
-                            Text("#\(seeds.count - i) \(away.code)")
-                        }
-                        .font(.subheadline.monospacedDigit())
-                        .padding(9)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
-                    }
-                    let rounds = seeds.count == 32 ? 5 : (seeds.count == 16 ? 4 : 3)
-                    HStack(spacing: 8) {
-                        ForEach(2...rounds, id: \.self) { number in
-                            VStack(spacing: 5) {
-                                Text("Round \(number)").font(.caption.bold())
-                                Text("TBD")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
+        ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Division leaders")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(divisionOrder, id: \.self) { division in
+                            IceometricsCompactStandingTable(
+                                title: division == "Metropolitan" ? "Metro" : division,
+                                rows: Array(divisionRows(division).prefix(3)),
+                                firstRank: 1,
+                                teams: teams
+                            )
                         }
                     }
-                    .padding(.vertical, 8)
+
+                    // One continuous surface for both conferences' wildcard race.
+                    HStack(alignment: .top, spacing: 0) {
+                        IceometricsCompactStandingTable(
+                            title: "Western Wildcard",
+                            rows: remainingRows("Western"),
+                            firstRank: 1,
+                            teams: teams,
+                            wildCard: true,
+                            width: 280,
+                            unifiedSurface: true
+                        )
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.16))
+                            .frame(width: 1)
+                        IceometricsCompactStandingTable(
+                            title: "Eastern Wildcard",
+                            rows: remainingRows("Eastern"),
+                            firstRank: 1,
+                            teams: teams,
+                            wildCard: true,
+                            width: 280,
+                            unifiedSurface: true
+                        )
+                    }
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 11))
+
+                    Text("Divisions")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(divisionOrder, id: \.self) { division in
+                            IceometricsCompactStandingTable(
+                                title: division == "Metropolitan" ? "Metro" : division,
+                                rows: divisionRows(division),
+                                firstRank: 1,
+                                teams: teams
+                            )
+                        }
+                    }
                 }
+                IceometricsCompactStandingTable(
+                    title: "League",
+                    rows: snapshot.rows.sorted { $0.leagueRank < $1.leagueRank },
+                    firstRank: 1,
+                    teams: teams,
+                    width: 156
+                )
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 6)
         }
     }
 }
 
-private struct IceometricsActualStandingsPanel: View {
-    let snapshot: IceometricsNHLStandings
-    private let grid = [GridItem(.adaptive(minimum: 300), spacing: 12)]
-    private var conferences: [String] { ["Eastern", "Western"] }
-    private var divisions: [String] { ["Atlantic", "Metropolitan", "Central", "Pacific"] }
+private struct IceometricsCompactStandingTable: View {
+    let title: String
+    let rows: [IceometricsNHLStanding]
+    let firstRank: Int
+    let teams: [ModelTeam]
+    var wildCard = false
+    var width: CGFloat = 150
+    var unifiedSurface = false
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Actual NHL standings • \(snapshot.date)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                IceometricsStandingsTable(title: "League 1–32", rows: snapshot.rows)
-                Text("Conferences").font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(conferences, id: \.self) { conference in
-                        IceometricsStandingsTable(
-                            title: conference + " 1–16",
-                            rows: snapshot.rows.filter { $0.conference == conference }
-                                .sorted { $0.conferenceRank < $1.conferenceRank }
-                        )
-                    }
-                }
-                Text("Divisions").font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(divisions, id: \.self) { division in
-                        IceometricsStandingsTable(
-                            title: division + " 1–8",
-                            rows: snapshot.rows.filter { $0.division == division }
-                                .sorted { $0.divisionRank < $1.divisionRank }
-                        )
-                    }
-                }
-                Text("Wild Card • Division top three qualify directly")
-                    .font(.headline)
-                LazyVGrid(columns: grid, alignment: .leading, spacing: 12) {
-                    ForEach(conferences, id: \.self) { conference in
-                        IceometricsStandingsTable(
-                            title: conference + " wild-card race",
-                            rows: snapshot.rows.filter {
-                                $0.conference == conference && $0.divisionRank > 3
-                            }.sorted { $0.wildcardRank < $1.wildcardRank }
-                        )
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 8)
+            HStack(spacing: 5) {
+                Text("#").frame(width: 20, alignment: .trailing)
+                Text("Team")
+                Spacer(minLength: 0)
+                Text("PTS").frame(width: 31, alignment: .trailing)
             }
-            .padding(.bottom, 16)
+            .font(.caption2.bold())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            ForEach(rows.indices, id: \.self) { index in
+                let team = rows[index]
+                HStack(spacing: 5) {
+                    Text(String(firstRank + index))
+                        .frame(width: 20, alignment: .trailing)
+                        .foregroundStyle(.secondary)
+                    ModelTeamLogo(
+                        team: teamForCode(team.code, teams: teams),
+                        code: team.code,
+                        size: 22
+                    )
+                    .frame(width: 24, alignment: .leading)
+                    .accessibilityLabel(team.name.isEmpty ? team.code : team.name)
+                    Text(team.code)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.80)
+                    Spacer(minLength: 0)
+                    Text(String(team.points))
+                        .fontWeight(.semibold)
+                        .frame(width: 31, alignment: .trailing)
+                }
+                .font(.caption.monospacedDigit())
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(
+                    wildCard && index < 2
+                        ? Color.accentColor.opacity(0.11)
+                        : (index.isMultiple(of: 2)
+                            ? Color.primary.opacity(0.035) : Color.clear)
+                )
+            }
+        }
+        .padding(.bottom, 7)
+        .frame(width: width, alignment: .leading)
+        .background {
+            if !unifiedSurface {
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(.thinMaterial)
+            }
         }
     }
 }
@@ -585,7 +842,7 @@ private struct IceometricsStandingsTable: View {
             Text(title).font(.subheadline.bold()).padding(9)
             HStack(spacing: 4) {
                 Text("#").frame(width: 20, alignment: .trailing)
-                Text("Team").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Team").frame(width: 58, alignment: .leading)
                 Text("GP").frame(width: 25, alignment: .trailing)
                 Text("W").frame(width: 23, alignment: .trailing)
                 Text("L").frame(width: 23, alignment: .trailing)
@@ -599,7 +856,7 @@ private struct IceometricsStandingsTable: View {
                 let team = rows[i]
                 HStack(spacing: 4) {
                     Text(String(i + 1)).frame(width: 20, alignment: .trailing)
-                    Text(team.code).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(team.code).frame(width: 58, alignment: .leading)
                     Text(String(team.gp)).frame(width: 25, alignment: .trailing)
                     Text(String(team.wins)).frame(width: 23, alignment: .trailing)
                     Text(String(team.losses)).frame(width: 23, alignment: .trailing)
@@ -621,10 +878,21 @@ private struct IceometricsStandingsTable: View {
 private struct FullPlayoffBracketGraphic: View {
     let picture: ModelPlayoffPicture
     let teams: [ModelTeam]
+    var availableHeight: CGFloat = 0
+    var openingWest: [String] = []
+    var openingEast: [String] = []
+    var leftTitle: String = "Western Conference"
+    var rightTitle: String = "Eastern Conference"
+    var showDivisionLabels = true
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    // Extra vertical room for Mac and iPad; iPhone retains compact proportions.
-    private var height: CGFloat { horizontalSizeClass == .compact ? 650 : 930 }
+    private var hasOpeningRound: Bool {
+        openingWest.count == 16 && openingEast.count == 16
+    }
+    // One large bracket fills the Mac viewport instead of stacking boards.
+    private var height: CGFloat {
+        max(horizontalSizeClass == .compact ? 650 : 620, availableHeight)
+    }
     private var verticalScale: CGFloat { height / 650 }
     // Round-aware sizes stay within each bracket column, scaling on Mac
     // without letting adjacent conference/cup circles overlap on iPhone.
@@ -635,6 +903,12 @@ private struct FullPlayoffBracketGraphic: View {
     }
 
     private var round1Y: [CGFloat] { [90, 138, 194, 242, 416, 464, 520, 568].map { $0 * verticalScale } }
+    private var openingY: [CGFloat] {
+        round1Y.flatMap { [$0 - 11 * verticalScale, $0 + 11 * verticalScale] }
+    }
+    private var openingPairs: [(CGFloat, CGFloat)] {
+        round1Y.indices.map { (openingY[2 * $0], openingY[2 * $0 + 1]) }
+    }
     private var round2Y: [CGFloat] { [114, 218, 440, 544].map { $0 * verticalScale } }
     private var conferenceFinalY: [CGFloat] { [166, 492].map { $0 * verticalScale } }
     private var conferenceChampionY: CGFloat { 328 * verticalScale }
@@ -650,11 +924,11 @@ private struct FullPlayoffBracketGraphic: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Western Conference")
+                Text(leftTitle)
                 Spacer()
                 Text("Stanley Cup")
                 Spacer()
-                Text("Eastern Conference")
+                Text(rightTitle)
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -667,7 +941,8 @@ private struct FullPlayoffBracketGraphic: View {
                 let leftEdge: CGFloat = roundOneInset
                 let rightEdge = max(leftEdge + 120, proxy.size.width - roundOneInset)
                 let centerX = proxy.size.width / 2
-                let step = max(30, (centerX - leftEdge) / 4)
+                let step = max(30, (centerX - leftEdge) / (hasOpeningRound ? 5 : 4))
+                let r0Size = min(24, max(18, 21 * verticalScale))
                 let r1Size = min(
                     sizeForRound(0, step: step),
                     2 * roundOneInset - 6
@@ -677,18 +952,36 @@ private struct FullPlayoffBracketGraphic: View {
                 let championSize = sizeForRound(3, step: step)
                 let cupSize = sizeForRound(4, step: step)
 
-                let e1 = leftEdge
-                let e2 = leftEdge + step
-                let e3 = leftEdge + step * 2
-                let e4 = leftEdge + step * 3
+                let e0 = leftEdge
+                let e1 = leftEdge + (hasOpeningRound ? step : 0)
+                let e2 = e1 + step
+                let e3 = e1 + step * 2
+                let e4 = e1 + step * 3
 
-                let w1 = rightEdge
-                let w2 = rightEdge - step
-                let w3 = rightEdge - step * 2
-                let w4 = rightEdge - step * 3
+                let w0 = rightEdge
+                let w1 = rightEdge - (hasOpeningRound ? step : 0)
+                let w2 = w1 - step
+                let w3 = w1 - step * 2
+                let w4 = w1 - step * 3
 
                 ZStack {
                     Canvas { context, _ in
+                        if hasOpeningRound {
+                            drawConnections(
+                                context: &context,
+                                fromX: e0 + r0Size / 2,
+                                toX: e1 - r1Size / 2,
+                                sourcePairs: openingPairs,
+                                destinationY: round1Y
+                            )
+                            drawConnections(
+                                context: &context,
+                                fromX: w0 - r0Size / 2,
+                                toX: w1 + r1Size / 2,
+                                sourcePairs: openingPairs,
+                                destinationY: round1Y
+                            )
+                        }
                         drawConnections(
                             context: &context,
                             fromX: e1 + r1Size / 2,
@@ -747,30 +1040,40 @@ private struct FullPlayoffBracketGraphic: View {
                         )
                     }
 
-                    roundHeader("R1", x: e1)
-                    roundHeader("R2", x: e2)
-                    roundHeader("CF", x: e3)
-                    roundHeader("R1", x: w1)
-                    roundHeader("R2", x: w2)
-                    roundHeader("CF", x: w3)
+                    if hasOpeningRound {
+                        roundHeader("R1", x: e0)
+                        roundHeader("R1", x: w0)
+                        bracketNodes(openingWest, x: e0, y: openingY, size: r0Size)
+                        bracketNodes(openingEast, x: w0, y: openingY, size: r0Size)
+                        roundHeader("R5", x: e4)
+                        roundHeader("R5", x: w4)
+                    }
+                    roundHeader(hasOpeningRound ? "R2" : "R1", x: e1)
+                    roundHeader(hasOpeningRound ? "R3" : "R2", x: e2)
+                    roundHeader(hasOpeningRound ? "R4" : "CF", x: e3)
+                    roundHeader(hasOpeningRound ? "R2" : "R1", x: w1)
+                    roundHeader(hasOpeningRound ? "R3" : "R2", x: w2)
+                    roundHeader(hasOpeningRound ? "R4" : "CF", x: w3)
                     roundHeader("Cup", x: centerX)
 
-                    Text("CENTRAL")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: e1 + 36, y: 48 * verticalScale)
-                    Text("PACIFIC")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: e1 + 36, y: 365 * verticalScale)
-                    Text("METRO")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: w1 - 36, y: 48 * verticalScale)
-                    Text("ATLANTIC")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .position(x: w1 - 36, y: 365 * verticalScale)
+                    if showDivisionLabels {
+                        Text("CENTRAL")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: e1 + 36, y: 48 * verticalScale)
+                        Text("PACIFIC")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: e1 + 36, y: 365 * verticalScale)
+                        Text("METRO")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: w1 - 36, y: 48 * verticalScale)
+                        Text("ATLANTIC")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .position(x: w1 - 36, y: 365 * verticalScale)
+                    }
 
                     bracketNodes(westRound1, x: e1, y: round1Y, size: r1Size)
                     bracketNodes(westRound2, x: e2, y: round2Y, size: r2Size)
@@ -1034,7 +1337,7 @@ private struct MagicConferenceTable: View {
     let teams: [ModelTeam]
     let mode: MagicDisplayMode
 
-    private let teamWidth: CGFloat = 90
+    private let teamWidth: CGFloat = 76
     private let statWidth: CGFloat = 38
 
     private var cellWidth: CGFloat {
@@ -1306,7 +1609,7 @@ private struct PointProbabilitiesPanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.iceometricsFavoritePaletteTeamCode) private var favoritePaletteTeamCode
 
-    private let teamWidth: CGFloat = 90
+    private let teamWidth: CGFloat = 76
     private let predictionWidth: CGFloat = 46
     private let probabilityWidth: CGFloat = 48
 

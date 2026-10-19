@@ -34,7 +34,13 @@ struct RootView: View {
                 StatsView(
                     viewModel: StatsViewModel(
                         service: StatsDataService(season: settings.selectedSeason)
-                    )
+                    ),
+                    isActive: selectedTab == .stats
+                        && settings.selectedSeason == "2026-2027",
+                    liveRefresh: {
+                        await homeViewModel.loadIfNeeded()
+                        await homeViewModel.refreshLiveGames()
+                    }
                 )
                     .id(settings.selectedSeason)
                     .toolbar {
@@ -119,8 +125,10 @@ struct RootView: View {
     private func handleDeepLink(
         _ url: URL
     ) {
-        guard url.scheme?.lowercased()
-            == "iceometrics"
+        // The macOS widget extension deliberately uses a separate URL
+        // scheme from iPhone widgets. Both must route to the same app tab.
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "iceometrics" || scheme == "iceometrics-mac"
         else {
             return
         }
@@ -145,6 +153,11 @@ struct RootView: View {
             // Once PredictionsView exposes its internal selection,
             // we can route directly to the pie subsection as well.
             if path == "/pie" {
+                // Persist the destination before switching tabs so the
+                // Predictions view can initialize after cold widget launch.
+                UserDefaults.standard.set(
+                    "pie", forKey: "iceometrics.predictions.tab"
+                )
                 NotificationCenter.default.post(
                     name: .iceometricsOpenPredictionPie,
                     object: nil

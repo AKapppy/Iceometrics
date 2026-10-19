@@ -16,3 +16,67 @@ struct IceometricsTests {
     }
 
 }
+
+
+import Foundation
+@testable import Iceometrics
+
+@MainActor
+struct SettingsCloudLocalFallbackTests {
+    @Test("Preferences stay local when cloud sync is unavailable")
+    func preferencesPersistOffline() {
+        let suite = "com.akappy.Iceometrics.test.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            Issue.record("Could not create isolated local defaults")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let first = AppSettingsStore(defaults: defaults, syncWithICloud: false)
+        first.favoriteTeamID = "NYR"
+        first.appearance = .light
+        first.accentMode = .custom
+        first.customAccentHex = "#1177AA"
+        first.showPregamePredictions = false
+        first.setCompetitionVisible("PWHL", visible: false)
+
+        let second = AppSettingsStore(defaults: defaults, syncWithICloud: false)
+        #expect(second.favoriteTeamID == "NYR")
+        #expect(second.appearance == .light)
+        #expect(second.accentMode == .custom)
+        #expect(second.customAccentHex == "#1177AA")
+        #expect(second.showPregamePredictions == false)
+        #expect(second.isCompetitionVisible("PWHL") == false)
+
+        second.reset()
+        let third = AppSettingsStore(defaults: defaults, syncWithICloud: false)
+        #expect(third.favoriteTeamID == nil)
+        #expect(third.appearance == .system)
+        #expect(third.isCompetitionVisible("PWHL") == true)
+    }
+}
+
+
+@MainActor
+struct AppleAccountPreferenceIsolationTests {
+    @Test("Fresh Apple accounts start without favorite or custom settings")
+    func accountsAreSeparate() {
+        let idA = "alpha-account-" + UUID().uuidString
+        let idB = "beta-account-" + UUID().uuidString
+
+        let first = AppSettingsStore(accountID: idA, syncWithICloud: false)
+        #expect(first.favoriteTeamID == nil)
+        #expect(first.appearance == .system)
+        #expect(first.accentMode == .appDefault)
+        first.favoriteTeamID = "NYR"
+        first.appearance = .light
+
+        let second = AppSettingsStore(accountID: idB, syncWithICloud: false)
+        #expect(second.favoriteTeamID == nil)
+        #expect(second.appearance == .system)
+
+        let again = AppSettingsStore(accountID: idA, syncWithICloud: false)
+        #expect(again.favoriteTeamID == "NYR")
+        #expect(again.appearance == .light)
+    }
+}

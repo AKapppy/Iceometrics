@@ -229,15 +229,21 @@ struct GameDetailView: View {
     }
 
     private func goaliesSection(_ detail: NHLGameDetail) -> some View {
-        detailCard(title: "Goalies") {
+        detailCard(title: "Starting Goalies · NHL Boxscore") {
             twoTeamHeader
             Divider()
             threeColumnRow(
                 away: goalieText(detail.awayGoalie),
-                label: "Starter",
+                label: "Recorded Starter",
                 home: goalieText(detail.homeGoalie),
                 emphasize: false
             )
+            Text("Source: NHL gamecenter · A name appears only when the official boxscore flags a starter.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 9)
         }
     }
 
@@ -614,15 +620,8 @@ struct GameDetailView: View {
             return missing
         }
 
-        if slot.label == "Predicted" {
-            return missing
-        }
-
-        if slot.label == "Confirmed" {
-            return slot.name
-        }
-
-        return "\(slot.label): \(slot.name)"
+        // Only source-backed, NHL-recorded starters are populated here.
+        return slot.label == "NHL boxscore" ? slot.name : missing
     }
 
     private func numberOrMissing(_ value: Int?) -> String {
@@ -784,34 +783,13 @@ struct GameDetailView: View {
         case .scheduled:
             return game.startTime.formatted(date: .omitted, time: .shortened)
         case .live:
-            if game.isIntermission == true {
-                return "\(periodLabel ?? "") Int"
-                    .trimmingCharacters(in: .whitespaces)
-            }
-            if let periodLabel,
-               let time = game.timeRemaining,
-               !time.isEmpty {
-                return "\(periodLabel) · \(time)"
-            }
-            return periodLabel ?? "LIVE"
+            return game.scoreboardLiveText
         case .final:
             return "FINAL"
         case .postponed:
             return "PPD"
         case .unknown:
             return game.startTime.formatted(date: .omitted, time: .shortened)
-        }
-    }
-
-    private var periodLabel: String? {
-        if game.periodType?.uppercased() == "OT" { return "OT" }
-        if game.periodType?.uppercased() == "SO" { return "SO" }
-        guard let period = game.periodNumber, period > 0 else { return nil }
-        switch period {
-        case 1: return "1st"
-        case 2: return "2nd"
-        case 3: return "3rd"
-        default: return "\(period)th"
         }
     }
 

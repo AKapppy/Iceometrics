@@ -94,13 +94,12 @@ actor PlayerStatsService {
         merge(payload.plusMinus, stat: "+/-", rawKey: "plusMinus", into: &store)
         merge(payload.penaltyMinutes, stat: "PIM", rawKey: "penaltyMinutes", into: &store)
 
-        let keys = ["Goals", "Assists", "Points", "Shots", "Hits", "Blocks", "+/-", "PIM"]
         return store.values.map { line in
             PlayerStatLine(
                 playerID: line.playerID,
                 name: line.name,
                 teamCode: line.teamCode,
-                values: Dictionary(uniqueKeysWithValues: keys.map { ($0, line.values[$0] ?? 0) })
+                values: line.values
             )
         }
     }
@@ -118,16 +117,17 @@ actor PlayerStatsService {
         merge(payload.saves, stat: "Saves", rawKey: "saves", into: &store)
         merge(payload.gamesStarted, stat: "Games Started", rawKey: "gamesStarted", into: &store)
         merge(payload.starts, stat: "Games Started", rawKey: "starts", into: &store)
-        merge(payload.gamesPlayed, stat: "Games Started", rawKey: "gamesPlayed", into: &store)
         merge(payload.goalsAgainstAverage, stat: "GAA", rawKey: "goalsAgainstAverage", into: &store)
         merge(payload.gaa, stat: "GAA", rawKey: "gaa", into: &store)
 
-        let keys = ["Wins", "Losses", "OTL", "Shutouts", "Save %", "Saves", "Games Started", "Saves / GS", "GAA"]
         return store.values.map { line in
-            var values = Dictionary(uniqueKeysWithValues: keys.map { ($0, line.values[$0] ?? 0) })
-            let starts = values["Games Started"] ?? 0
-            let saves = values["Saves"] ?? 0
-            values["Saves / GS"] = starts > 0 ? saves / starts : 0
+            var values = line.values
+            // Only calculate per-start saves when both underlying
+            // measurements were reported. Do not invent zero.
+            if let starts = values["Games Started"], starts > 0,
+               let saves = values["Saves"] {
+                values["Saves / GS"] = saves / starts
+            }
             return PlayerStatLine(
                 playerID: line.playerID,
                 name: line.name,
@@ -160,7 +160,10 @@ actor PlayerStatsService {
             if line.teamCode.isEmpty, !row.teamCode.isEmpty {
                 line.teamCode = row.teamCode
             }
-            var value = row.numericValue(for: rawKey)
+            guard var value = row.numericValue(for: rawKey), value.isFinite else {
+                // An absent upstream stat is not a measured zero.
+                continue
+            }
             if normalizePercent && value > 1 {
                 value /= 100
             }
@@ -293,7 +296,7 @@ private nonisolated struct NHLLeaderRow: Decodable, Sendable {
 
     var teamCode: String { teamCodeValue.uppercased() }
 
-    func numericValue(for key: String) -> Double {
+    func numericValue(for key: String) -> Double? {
         let direct: Double?
         switch key {
         case "goals": direct = goals
@@ -318,7 +321,7 @@ private nonisolated struct NHLLeaderRow: Decodable, Sendable {
         case "gaa": direct = gaa
         default: direct = nil
         }
-        return direct ?? value ?? statValue ?? leaderValue ?? total ?? 0
+        return direct ?? value ?? statValue ?? leaderValue ?? total
     }
 }
 

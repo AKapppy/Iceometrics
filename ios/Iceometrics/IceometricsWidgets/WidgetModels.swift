@@ -140,6 +140,13 @@ struct WidgetSnapshot:
 enum WidgetSnapshotStore {
     static func load()
         -> WidgetSnapshot? {
+        // Widgets show no account data until the host has verified Apple
+        // authorization, and immediately lock after explicit sign-out.
+        guard UserDefaults(suiteName: iceometricsWidgetAppGroup)?
+            .bool(forKey: "iceometrics.account.authorized") == true
+        else {
+            return nil
+        }
         guard let containerURL =
             FileManager.default
                 .containerURL(
